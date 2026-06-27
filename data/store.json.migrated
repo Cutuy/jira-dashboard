@@ -37,7 +37,7 @@
         },
         {
           "id": 5,
-          "question": "Who/what normally processes tickets in this repo — is this a manual human workflow or an automated pipeline being tested?",
+          "question": "Who/what normally processes tickets in this repo \u2014 is this a manual human workflow or an automated pipeline being tested?",
           "answer": "n/a",
           "round": 1
         }
@@ -45,7 +45,7 @@
       "activity": [
         {
           "action": "no_changes",
-          "detail": "No code changes to commit — closing ticket directly",
+          "detail": "No code changes to commit \u2014 closing ticket directly",
           "time": "2026-06-27T16:41:03.146Z"
         },
         {
@@ -95,7 +95,7 @@
         },
         {
           "action": "clarify_error",
-          "detail": "OpenCode exited 1: \u001b[0m\n> build · MiniMax-M3\n\u001b[0m\n\u001b[91m\u001b[1mError: \u001b[0minvalid api key\n",
+          "detail": "OpenCode exited 1: \u001b[0m\n> build \u00b7 MiniMax-M3\n\u001b[0m\n\u001b[91m\u001b[1mError: \u001b[0minvalid api key\n",
           "time": "2026-06-27T16:34:49.358Z"
         },
         {
@@ -117,7 +117,7 @@
       "title": "Prepush check \"coding rules check\"",
       "content": "If failing \"coding rules check\", should attempt a fix but don't commit the fix - ask user to commit, and still fail the check",
       "stage": "done",
-      "plan": "Create `src/pyxen/_autofix.py` as a standalone autofix library, then slim down `scripts/check-coding-rules.py` to only the check logic.\n\n1. **Create `src/pyxen/_autofix.py`**:\n   - Move all autofix functions from `check-coding-rules.py` lines 150–529 into this new module:\n     - Private helpers: `_add_import`, `_get_func_body`, `_function_has_assert`, `_classify_body_stmts`, `_extract_stmt_source`, `_remove_setup_noise`, `_fix_rule2_fallback`\n     - Public per-rule functions: `autofix_rule1(text) -> tuple[str, bool]`, `autofix_rule2(text) -> tuple[str, bool]`\n     - Public orchestrator: `apply_fixes(error_files) -> list[Path]` — with the `git add` block removed entirely (fixes are written to disk but left unstaged)\n   - Imports needed: `ast`, `re`, `textwrap`, `defaultdict`, `Path`\n\n2. **Modify `scripts/check-coding-rules.py`**:\n   - Remove all code from line 150 onward (autofix helpers + `_apply_fixes`)\n   - Add `from pyxen._autofix import apply_fixes` at the top imports\n   - Keep `_check_rule1`, `_check_rule2`, `_module_for`, `_changed_files`, `_SKIP_MODULES`, `_PATH_RESOLVE_RE`, `_MAIN_FN_RE`, `REPO_ROOT` — these are check-only logic\n   - Change `_apply_fixes(error_files)` call in `main()` to `apply_fixes(error_files)`\n   - Keep exit code 1 and user-facing message unchanged (\"Please review, commit, and push again.\")\n\n3. **No changes to `.githooks/pre-push`** — it already sets `PYTHONPATH=\"src:$PYTHONPATH\"`, so `from pyxen._autofix import apply_fixes` will resolve correctly.",
+      "plan": "Create `src/pyxen/_autofix.py` as a standalone autofix library, then slim down `scripts/check-coding-rules.py` to only the check logic.\n\n1. **Create `src/pyxen/_autofix.py`**:\n   - Move all autofix functions from `check-coding-rules.py` lines 150\u2013529 into this new module:\n     - Private helpers: `_add_import`, `_get_func_body`, `_function_has_assert`, `_classify_body_stmts`, `_extract_stmt_source`, `_remove_setup_noise`, `_fix_rule2_fallback`\n     - Public per-rule functions: `autofix_rule1(text) -> tuple[str, bool]`, `autofix_rule2(text) -> tuple[str, bool]`\n     - Public orchestrator: `apply_fixes(error_files) -> list[Path]` \u2014 with the `git add` block removed entirely (fixes are written to disk but left unstaged)\n   - Imports needed: `ast`, `re`, `textwrap`, `defaultdict`, `Path`\n\n2. **Modify `scripts/check-coding-rules.py`**:\n   - Remove all code from line 150 onward (autofix helpers + `_apply_fixes`)\n   - Add `from pyxen._autofix import apply_fixes` at the top imports\n   - Keep `_check_rule1`, `_check_rule2`, `_module_for`, `_changed_files`, `_SKIP_MODULES`, `_PATH_RESOLVE_RE`, `_MAIN_FN_RE`, `REPO_ROOT` \u2014 these are check-only logic\n   - Change `_apply_fixes(error_files)` call in `main()` to `apply_fixes(error_files)`\n   - Keep exit code 1 and user-facing message unchanged (\"Please review, commit, and push again.\")\n\n3. **No changes to `.githooks/pre-push`** \u2014 it already sets `PYTHONPATH=\"src:$PYTHONPATH\"`, so `from pyxen._autofix import apply_fixes` will resolve correctly.",
       "worktree_path": null,
       "branch_name": null,
       "commit_sha": null,
@@ -157,7 +157,7 @@
       "activity": [
         {
           "action": "no_changes",
-          "detail": "No code changes to commit — closing ticket directly",
+          "detail": "No code changes to commit \u2014 closing ticket directly",
           "time": "2026-06-27T18:54:46.706Z"
         },
         {
@@ -322,7 +322,7 @@
         },
         {
           "action": "recovered",
-          "detail": "Server restarted — previous opencode session gone, reset to idle",
+          "detail": "Server restarted \u2014 previous opencode session gone, reset to idle",
           "time": "2026-06-27T18:45:01.551Z"
         },
         {
@@ -572,7 +572,7 @@
         },
         {
           "action": "clarified_plan",
-          "detail": "Assumes the pre-push hook's existing PYTHONPATH setting (src:$PYTHONPATH) is sufficient for importing pyxen._autofix — verified it is. The `git add` block in the old `_apply_fixes` is removed entirely, leaving fixes on disk but unstaged per A1. Public API surface follows one function per rule (`autofix_rule1`, `autofix_rule2`) per A3.",
+          "detail": "Assumes the pre-push hook's existing PYTHONPATH setting (src:$PYTHONPATH) is sufficient for importing pyxen._autofix \u2014 verified it is. The `git add` block in the old `_apply_fixes` is removed entirely, leaving fixes on disk but unstaged per A1. Public API surface follows one function per rule (`autofix_rule1`, `autofix_rule2`) per A3.",
           "time": "2026-06-27T18:40:50.436Z"
         },
         {
@@ -1042,7 +1042,7 @@
         },
         {
           "action": "recovered",
-          "detail": "Server restarted — previous opencode session gone, reset to idle",
+          "detail": "Server restarted \u2014 previous opencode session gone, reset to idle",
           "time": "2026-06-27T18:13:14.545Z"
         },
         {
@@ -1358,10 +1358,10 @@
       "title": "Create another comprehensive example app covering all primitives",
       "content": "",
       "stage": "done",
-      "plan": "Create examples/all_in_one_demo/ — a single async CLI app that exercises all 7 primitives plus the cron extension in a coherent, useful workflow. The app is a 'Dev Session Tracker': it identifies the user (identity), loads API keys (secrets), installs pretty-printing deps (pkg), stores session logs (storage), tracks token budgets (tokens), traces every operation (observability), fires IPC events that a background listener consumes (ipc), and lists/schedules a cron job (cron).\n\nFiles to create under examples/all_in_one_demo/:\n- __init__.py: empty\n- runtime.json: declares all 7 primitives + cron extension. identity=env, tokens=json_budget, ipc=inproc, pkg=pip (with requirements.txt), storage=local_sqlite, secrets=dotenv, observability=stdout, cron=with one job declared\n- main.py: async main() that walks through each primitive sequentially with a background asyncio task subscribing to IPC events. Includes _main() for pyxen-test discovery. Follows hello_runtime patterns (PYTHONPATH setup, HERE constant, asyncio.run)\n- .env.example: placeholder for API_KEY\n- budget.json: {\"daily_limit\": 100000}\n- requirements.txt: rich (for pretty table output, making it 'fun')\n- README.md: run instructions\n\nNo existing files need modification — this is a self-contained new example.",
+      "plan": "Create examples/all_in_one_demo/ \u2014 a single async CLI app that exercises all 7 primitives plus the cron extension in a coherent, useful workflow. The app is a 'Dev Session Tracker': it identifies the user (identity), loads API keys (secrets), installs pretty-printing deps (pkg), stores session logs (storage), tracks token budgets (tokens), traces every operation (observability), fires IPC events that a background listener consumes (ipc), and lists/schedules a cron job (cron).\n\nFiles to create under examples/all_in_one_demo/:\n- __init__.py: empty\n- runtime.json: declares all 7 primitives + cron extension. identity=env, tokens=json_budget, ipc=inproc, pkg=pip (with requirements.txt), storage=local_sqlite, secrets=dotenv, observability=stdout, cron=with one job declared\n- main.py: async main() that walks through each primitive sequentially with a background asyncio task subscribing to IPC events. Includes _main() for pyxen-test discovery. Follows hello_runtime patterns (PYTHONPATH setup, HERE constant, asyncio.run)\n- .env.example: placeholder for API_KEY\n- budget.json: {\"daily_limit\": 100000}\n- requirements.txt: rich (for pretty table output, making it 'fun')\n- README.md: run instructions\n\nNo existing files need modification \u2014 this is a self-contained new example.",
       "worktree_path": null,
       "branch_name": null,
-      "commit_sha": null,
+      "commit_sha": "92e9da79191955eb9e029a2090a73d1bb30ce5b9",
       "review_feedback": null,
       "questions": [
         {
@@ -1372,7 +1372,7 @@
         },
         {
           "id": 27,
-          "question": "What form should the app take — a CLI script (like hello_runtime), a FastAPI web app (like notes_app), or something else?",
+          "question": "What form should the app take \u2014 a CLI script (like hello_runtime), a FastAPI web app (like notes_app), or something else?",
           "answer": "You decide. Should be easy to run",
           "round": 1
         },
@@ -1390,20 +1390,25 @@
         },
         {
           "id": 30,
-          "question": "Naming convention — something like examples/comprehensive_demo/ or examples/all_primitives/ ?",
+          "question": "Naming convention \u2014 something like examples/comprehensive_demo/ or examples/all_primitives/ ?",
           "answer": "Descriptive name",
           "round": 1
         }
       ],
       "activity": [
         {
+          "action": "recovered",
+          "detail": "Commits recovered from unreachable chain in pyxen object store. Branch feature/mqwsmw10 was force-cleaned when worktree .git pointer was deleted. Restored 3 commits (bd82a244, 099f844e, 92e9da79), fast-forwarded main to 92e9da7.",
+          "time": "2026-06-27T21:59:19.350125+00:00"
+        },
+        {
           "action": "no_changes",
-          "detail": "No code changes to commit — closing ticket directly",
+          "detail": "No code changes to commit \u2014 closing ticket directly",
           "time": "2026-06-27T20:52:32.938Z"
         },
         {
           "action": "implement_error",
-          "detail": "OpenCode exited null: es check into plugin-style Rule registry\n69d85d2 fix: str() cast for dict[str, object] key passed to storage.put(str)\n---\nOn branch feature/mqwsmw10\nnothing to commit, working tree clean\n---\n  ok    pyxen.impl.tokens.openai_usage  (4.0 ms)\n\n40 passed, 0 failed, 40 total (4267.7 ms)\n\u001b[0m\n\u001b[0m$ \u001b[0mcd /home/cutuy/.openclaw/workspace/pyxen/.worktrees/mqwsmw10 && PYTHONPATH=src python -c \"\nfrom examples.all_in_one_demo.main import _main\n_main()\n\" 2>&1\nall_in_one_demo _main() — ALL TESTS PASSED\n\u001b[0m\n",
+          "detail": "OpenCode exited null: es check into plugin-style Rule registry\n69d85d2 fix: str() cast for dict[str, object] key passed to storage.put(str)\n---\nOn branch feature/mqwsmw10\nnothing to commit, working tree clean\n---\n  ok    pyxen.impl.tokens.openai_usage  (4.0 ms)\n\n40 passed, 0 failed, 40 total (4267.7 ms)\n\u001b[0m\n\u001b[0m$ \u001b[0mcd /home/cutuy/.openclaw/workspace/pyxen/.worktrees/mqwsmw10 && PYTHONPATH=src python -c \"\nfrom examples.all_in_one_demo.main import _main\n_main()\n\" 2>&1\nall_in_one_demo _main() \u2014 ALL TESTS PASSED\n\u001b[0m\n",
           "time": "2026-06-27T20:26:59.194Z"
         },
         {
@@ -2668,7 +2673,7 @@
         }
       ],
       "created_at": "2026-06-27T20:09:25.668Z",
-      "updated_at": "2026-06-27T20:52:32.938Z",
+      "updated_at": "2026-06-27T21:59:19.350107+00:00",
       "status": "idle",
       "total_cpu": "391.2s",
       "total_elapsed": "598s"

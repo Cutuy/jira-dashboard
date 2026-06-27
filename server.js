@@ -2,30 +2,15 @@ const express = require('express');
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const db = require('./db');
 
 const PORT = process.env.PORT || 3006;
 const PYXEN_DIR = '/home/cutuy/.openclaw/workspace/pyxen';
 const OPENCODE_BIN = '/home/cutuy/.opencode/bin/opencode';
 const WORKTREES_DIR = '/home/cutuy/.openclaw/workspace/pyxen/.worktrees';
 const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'store.json');
 
-// ── JSON File Store ───────────────────────────────────────
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
-function loadStore() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-  } catch {
-    return { tickets: {}, nextQId: 1 };
-  }
-}
-
-function saveStore(store) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2), 'utf-8');
-}
-
-// ── Helpers ───────────────────────────────────────────────
+// ── Stage labels ──────────────────────────────────────────
 const STAGE_LABELS = {
   clarification: 'Clarification',
   implementation: 'Implementation',
@@ -34,24 +19,9 @@ const STAGE_LABELS = {
   done: 'Done'
 };
 
+// ── Helpers ───────────────────────────────────────────────
 function uid() {
   return Date.now().toString(36).toUpperCase();
-}
-
-function getTicket(store, id) {
-  const t = store.tickets[id];
-  if (!t) return null;
-  if (!t.activity) t.activity = [];
-  return t;
-}
-
-function logActivity(store, ticketId, action, detail = '') {
-  const t = store.tickets[ticketId];
-  if (!t) return;
-  if (!t.activity) t.activity = [];
-  t.activity.unshift({ action, detail, time: new Date().toISOString() });
-  // Keep last 50
-  if (t.activity.length > 500) t.activity = t.activity.slice(0, 500);
 }
 
 // ── OpenCode runner ───────────────────────────────────────
@@ -112,20 +82,19 @@ function runOpenCode(ticketId, prompt, onProgress) {
     let stderr = '';
     let killed = false;
 
-    // Resource monitor — tracks CPU seconds, memory, token usage
+    // Resource monitor
     const startTime = Date.now();
     const clkTck = 100;
     const ncores = parseInt(fs.readFileSync('/proc/cpuinfo', 'utf-8').match(/processor/g)?.length) || 4;
-    // Accumulate across runs for this ticket
     let baseCpu = 0, baseElapsed = 0;
     try {
-      const s = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-      const t = s.tickets[ticketId];
+      const t = db.getTicket(ticketId);
       if (t) {
         baseCpu = parseFloat(t.total_cpu || '0');
         baseElapsed = parseInt(t.total_elapsed || '0');
       }
     } catch {}
+
     const resMonitor = setInterval(() => {
       try {
         const raw = fs.readFileSync(`/proc/${proc.pid}/stat`, 'utf-8');
@@ -139,7 +108,6 @@ function runOpenCode(ticketId, prompt, onProgress) {
         const memMB = (rss * 4096 / (1024 * 1024)).toFixed(1);
         const elapsed = baseElapsed + Math.round((Date.now() - startTime) / 1000);
 
-        // Token usage via opencode stats for this project
         let tokens = '';
         try {
           const statsOut = execSync(`${OPENCODE_BIN} stats --project ''`, { encoding: 'utf-8', timeout: 3000, stdio: 'pipe', cwd: PYXEN_DIR });
@@ -199,16 +167,14 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public-spa')));
 
-// SPA fallback — serve index.html for all non-API routes
+// SPA fallback
 app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public-spa', 'index.html'));
 });
 
-// List all tickets
+// ── List all tickets ──────────────────────────────────────
 app.get('/api/tickets', (req, res) => {
-  const store = loadStore();
-  const tickets = Object.values(store.tickets)
-    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  const tickets = db.getAllTickets();
   res.json({
     tickets,
     stages: ['clarification', 'implementation', 'review', 'ready', 'done'],
@@ -216,44 +182,32 @@ app.get('/api/tickets', (req, res) => {
   });
 });
 
-// Get single ticket
+// ── Get single ticket ─────────────────────────────────────
 app.get('/api/tickets/:id', (req, res) => {
-  const store = loadStore();
-  const t = getTicket(store, req.params.id);
+  const t = db.getTicket(req.params.id);
   if (!t) return res.status(404).json({ error: 'Ticket not found' });
   res.json(t);
 });
 
-// Create ticket
+// ── Create ticket ─────────────────────────────────────────
 app.post('/api/tickets', (req, res) => {
   const { title, content } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
 
-  const store = loadStore();
   const id = uid();
   const now = new Date().toISOString();
-  store.tickets[id] = {
+  const ticket = db.createTicket({
     id, title: title.trim(), content: (content || '').trim(),
-    stage: 'clarification', plan: null,
-    worktree_path: null, branch_name: null, commit_sha: null, review_feedback: null,
-    questions: [], activity: [],
     created_at: now, updated_at: now
-  };
-  logActivity(store, id, 'created', title.trim());
-  saveStore(store);
-
-  res.status(201).json(store.tickets[id]);
+  });
+  res.status(201).json(ticket);
 });
 
 // ── Stage 1: Clarification ────────────────────────────────
 app.post('/api/tickets/:id/clarify', async (req, res) => {
-  const store = loadStore();
-  const ticket = getTicket(store, req.params.id);
+  const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'clarification') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
-
-  // Reset questions for fresh start
-  ticket.questions = [];
 
   let extraContext = '';
   if (ticket.review_feedback) {
@@ -273,12 +227,10 @@ Your job:
 IMPORTANT: Output ONLY the JSON object, no other text.`;
 
   try {
-    logActivity(store, ticket.id, 'clarify_start');
-    ticket.status = 'running';
-    ticket.updated_at = new Date().toISOString();
-    saveStore(store);
+    db.logActivity(ticket.id, 'clarify_start');
+    db.updateTicketField(ticket.id, 'status', 'running');
     const output = await runOpenCode(ticket.id, prompt);
-    ticket.status = 'idle';
+    db.updateTicketField(ticket.id, 'status', 'idle');
 
     let parsed;
     try {
@@ -291,26 +243,25 @@ IMPORTANT: Output ONLY the JSON object, no other text.`;
     const questions = parsed.questions || [];
     const notes = parsed.notes || '';
 
-    for (const q of questions) {
-      ticket.questions.push({ id: store.nextQId++, question: q, answer: null, round: 1 });
-    }
-    if (notes) logActivity(store, ticket.id, 'clarify_notes', notes);
+    // Delete old questions for this ticket (fresh start)
+    db.deleteQuestionsForTicket(ticket.id);
 
-    ticket.updated_at = new Date().toISOString();
-    saveStore(store);
-    res.json(ticket);
+    for (const q of questions) {
+      db.addQuestion(ticket.id, q, null, 1);
+    }
+    if (notes) db.logActivity(ticket.id, 'clarify_notes', notes);
+
+    res.json(db.getTicket(ticket.id));
   } catch (err) {
-    logActivity(store, ticket.id, 'clarify_error', err.message);
-    ticket.status = 'idle';
-    saveStore(store);
+    db.logActivity(ticket.id, 'clarify_error', err.message);
+    db.updateTicketField(ticket.id, 'status', 'idle');
     res.status(500).json({ error: err.message });
   }
 });
 
-// Submit answers and get follow-up or plan
+// ── Submit answers ────────────────────────────────────────
 app.post('/api/tickets/:id/answer', async (req, res) => {
-  const store = loadStore();
-  const ticket = getTicket(store, req.params.id);
+  const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'clarification') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
 
@@ -322,25 +273,26 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
   // Save answers
   for (const [qId, answer] of Object.entries(answers)) {
     const q = ticket.questions.find(q => q.id === parseInt(qId));
-    if (q) q.answer = answer;
+    if (q) db.updateQuestionAnswer(q.id, ticket.id, answer);
   }
 
-  logActivity(store, ticket.id, 'answers_submitted', JSON.stringify(answers).slice(0, 200));
+  db.logActivity(ticket.id, 'answers_submitted', JSON.stringify(answers).slice(0, 200));
 
   // Build Q&A context
-  const qaText = ticket.questions.map((q, i) =>
+  const updatedTicket = db.getTicket(ticket.id);
+  const qaText = updatedTicket.questions.map((q, i) =>
     `Q${i + 1}: ${q.question}\nA${i + 1}: ${q.answer || '(no answer yet)'}`
   ).join('\n\n');
 
   let extraContext = '';
-  if (ticket.review_feedback) {
-    extraContext = `\n\nPrevious review feedback: ${ticket.review_feedback}`;
+  if (updatedTicket.review_feedback) {
+    extraContext = `\n\nPrevious review feedback: ${updatedTicket.review_feedback}`;
   }
 
   const prompt = `You are helping plan work on the pyxen codebase at ${PYXEN_DIR}.
 
-Ticket: ${ticket.title}
-Content: ${ticket.content}${extraContext}
+Ticket: ${updatedTicket.title}
+Content: ${updatedTicket.content}${extraContext}
 
 Clarification Q&A so far:
 ${qaText}
@@ -353,12 +305,10 @@ Your job:
 IMPORTANT: Output ONLY the JSON object, no other text.`;
 
   try {
-    logActivity(store, ticket.id, 'answer_process');
-    ticket.status = 'running';
-    ticket.updated_at = new Date().toISOString();
-    saveStore(store);
+    db.logActivity(ticket.id, 'answer_process');
+    db.updateTicketField(ticket.id, 'status', 'running');
     const output = await runOpenCode(ticket.id, prompt);
-    ticket.status = 'idle';
+    db.updateTicketField(ticket.id, 'status', 'idle');
 
     let parsed;
     try {
@@ -369,48 +319,45 @@ IMPORTANT: Output ONLY the JSON object, no other text.`;
     }
 
     if (parsed.need_more) {
-      const maxRound = Math.max(...ticket.questions.map(q => q.round || 1), 1);
+      const maxRound = Math.max(...updatedTicket.questions.map(q => q.round || 1), 1);
       for (const q of (parsed.questions || [])) {
-        ticket.questions.push({ id: store.nextQId++, question: q, answer: null, round: maxRound + 1 });
+        db.addQuestion(ticket.id, q, null, maxRound + 1);
       }
-      if (parsed.notes) logActivity(store, ticket.id, 'followup_notes', parsed.notes);
-      ticket.updated_at = new Date().toISOString();
-      saveStore(store);
-      return res.json({ clarified: false, ...ticket });
+      if (parsed.notes) db.logActivity(ticket.id, 'followup_notes', parsed.notes);
+      return res.json({ clarified: false, ...db.getTicket(ticket.id) });
     }
 
     // All clarified - store plan and move to implementation
-    ticket.plan = parsed.plan || '';
-    ticket.review_feedback = null;
-    ticket.stage = 'implementation';
-    ticket.updated_at = new Date().toISOString();
-    logActivity(store, ticket.id, 'clarified_plan', parsed.notes || '');
+    db.updateTicket(ticket.id, {
+      plan: parsed.plan || '',
+      review_feedback: null,
+      stage: 'implementation'
+    });
+    db.logActivity(ticket.id, 'clarified_plan', parsed.notes || '');
     if (parsed.files_to_modify) {
-      logActivity(store, ticket.id, 'files_affected', parsed.files_to_modify.join(', '));
+      db.logActivity(ticket.id, 'files_affected', parsed.files_to_modify.join(', '));
     }
-    saveStore(store);
 
-    res.json({ clarified: true, plan: ticket.plan, notes: parsed.notes, ticket });
+    const finalTicket = db.getTicket(ticket.id);
+    res.json({ clarified: true, plan: finalTicket.plan, notes: parsed.notes, ticket: finalTicket });
   } catch (err) {
-    logActivity(store, ticket.id, 'answer_error', err.message);
-    ticket.status = 'idle';
-    saveStore(store);
+    db.logActivity(ticket.id, 'answer_error', err.message);
+    db.updateTicketField(ticket.id, 'status', 'idle');
     res.status(500).json({ error: err.message });
   }
 });
 
 // ── Stage 2: Implementation ───────────────────────────────
 app.post('/api/tickets/:id/implement', async (req, res) => {
-  const store = loadStore();
-  const ticket = getTicket(store, req.params.id);
+  let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'implementation' && ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
 
   // If coming from review (continue), move back to implementation
   if (ticket.stage === 'review') {
-    ticket.stage = 'implementation';
-    ticket.updated_at = new Date().toISOString();
-    logActivity(store, ticket.id, 'continued', 'Resuming implementation from review');
+    db.updateTicket(ticket.id, { stage: 'implementation' });
+    db.logActivity(ticket.id, 'continued', 'Resuming implementation from review');
+    ticket = db.getTicket(ticket.id);
   }
 
   ensureWorktreesDir();
@@ -419,31 +366,28 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
   const worktreePath = path.join(WORKTREES_DIR, safeId);
 
   try {
-    // Ensure worktree exists and is usable
+    // Ensure worktree exists
     const dirHere = fs.existsSync(worktreePath);
     const tracked = (() => { try { return execSync(`git worktree list`, { cwd: PYXEN_DIR, encoding: 'utf-8' }).includes(worktreePath); } catch { return false; } })();
     console.log(`[implement] ${ticket.id} dirHere=${dirHere} tracked=${tracked} path=${worktreePath}`);
 
     if (dirHere && tracked) {
-      // Worktree already set up — nothing to do
+      // Worktree already set up
     } else if (dirHere && !tracked) {
-      // Directory exists but git doesn't know — repair and re-attach
       fs.rmSync(worktreePath, { recursive: true, force: true });
       try { runGit(`branch -D ${branchName}`); } catch {}
       runGit(`checkout -b ${branchName}`);
       runGit(`checkout main`);
       runGit(`worktree add ${worktreePath} ${branchName}`);
     } else {
-      // Fresh setup
       try { runGit(`branch -D ${branchName}`); } catch {}
       runGit(`checkout -b ${branchName}`);
       runGit(`checkout main`);
       runGit(`worktree add ${worktreePath} ${branchName}`);
     }
 
-    ticket.worktree_path = worktreePath;
-    ticket.branch_name = branchName;
-    logActivity(store, ticket.id, 'worktree_created', worktreePath);
+    db.updateTicket(ticket.id, { worktree_path: worktreePath, branch_name: branchName });
+    db.logActivity(ticket.id, 'worktree_created', worktreePath);
 
     const qaText = ticket.questions.map((q, i) =>
       `Q: ${q.question}\nA: ${q.answer || 'N/A'}`
@@ -470,16 +414,12 @@ Your job:
 
 Work in: ${worktreePath}`;
 
-    logActivity(store, ticket.id, 'implement_start');
-    ticket.status = 'running';
-    ticket.updated_at = new Date().toISOString();
+    db.logActivity(ticket.id, 'implement_start');
+    db.updateTicketField(ticket.id, 'status', 'running');
 
-    // Capture token baseline before implementation
     const tokensBefore = getOpencodeTokens();
 
-    saveStore(store);
-
-    // File-change monitor — tracks which files opencode modifies
+    // File-change monitor
     const seenFiles = new Set();
     const fileMonitor = setInterval(() => {
       try {
@@ -488,14 +428,8 @@ Work in: ${worktreePath}`;
           changed.split('\n').forEach(f => {
             if (!seenFiles.has(f)) {
               seenFiles.add(f);
-              const s = loadStore();
-              if (s.tickets[ticket.id]) {
-                if (!s.tickets[ticket.id].activity) s.tickets[ticket.id].activity = [];
-                s.tickets[ticket.id].activity.unshift({ action: 'file_changed', detail: f, time: new Date().toISOString() });
-                if (s.tickets[ticket.id].activity.length > 500) s.tickets[ticket.id].activity = s.tickets[ticket.id].activity.slice(0, 500);
-                s.tickets[ticket.id].updated_at = new Date().toISOString();
-                saveStore(s);
-              }
+              db.logActivity(ticket.id, 'file_changed', f);
+              db.updateTicketField(ticket.id, 'updated_at', new Date().toISOString());
             }
           });
         }
@@ -503,18 +437,8 @@ Work in: ${worktreePath}`;
     }, 2000);
 
     const output = await runOpenCode(ticket.id, prompt, (line) => {
-      // Only log resource lines as progress — skip LLM rambling
       if (line.startsWith('[resource]')) {
-        try {
-          const s = loadStore();
-          if (s.tickets[ticket.id]) {
-            if (!s.tickets[ticket.id].activity) s.tickets[ticket.id].activity = [];
-            s.tickets[ticket.id].activity.unshift({ action: 'resource', detail: line.replace('[resource] ', ''), time: new Date().toISOString() });
-            if (s.tickets[ticket.id].activity.length > 500) s.tickets[ticket.id].activity = s.tickets[ticket.id].activity.slice(0, 500);
-            s.tickets[ticket.id].updated_at = new Date().toISOString();
-            saveStore(s);
-          }
-        } catch { /* best-effort */ }
+        db.logActivity(ticket.id, 'resource', line.replace('[resource] ', ''));
       }
     });
 
@@ -524,8 +448,12 @@ Work in: ${worktreePath}`;
       cost: (tokensAfter.cost - tokensBefore.cost).toFixed(3),
       input: tokensAfter.input, output: tokensAfter.output
     };
-    ticket.token_usage = tokenDelta;
-    logActivity(store, ticket.id, 'token_usage', JSON.stringify(tokenDelta));
+    db.updateTicket(ticket.id, {
+      token_cost: parseFloat(tokenDelta.cost),
+      token_input: tokenDelta.input,
+      token_output: tokenDelta.output
+    });
+    db.logActivity(ticket.id, 'token_usage', JSON.stringify(tokenDelta));
 
     clearInterval(fileMonitor);
 
@@ -533,48 +461,45 @@ Work in: ${worktreePath}`;
     try { diffSummary = runGit(`diff --stat`, worktreePath); } catch { diffSummary = '(no diff)'; }
 
     // Save cumulative CPU/elapsed from last resource entry
-    const store2 = loadStore();
-    const t2 = store2.tickets[ticket.id];
+    const t2 = db.getTicket(ticket.id);
     if (!t2) return res.status(500).json({ error: 'Ticket data lost' });
     const lastRes = (t2.activity || []).find(a => a.action === 'resource');
     if (lastRes) {
       const p = Object.fromEntries(lastRes.detail.split(' ').map(s => s.split('=')));
-      t2.total_cpu = p.cpu || '0';
-      t2.total_elapsed = p.elapsed || '0';
+      db.updateTicket(ticket.id, {
+        total_cpu: p.cpu || '0',
+        total_elapsed: p.elapsed || '0',
+        stage: 'review',
+        status: 'idle'
+      });
+    } else {
+      db.updateTicket(ticket.id, { stage: 'review', status: 'idle' });
     }
-
-    t2.stage = 'review';
-    t2.status = 'idle';
-    t2.updated_at = new Date().toISOString();
-    logActivity(store2, ticket.id, 'implement_done', diffSummary.slice(0, 500));
-    saveStore(store2);
+    db.logActivity(ticket.id, 'implement_done', diffSummary.slice(0, 500));
 
     res.json({
       success: true, worktree_path: worktreePath, branch_name: branchName,
-      diff_summary: diffSummary, output_summary: output.slice(-1000), ticket: t2
+      diff_summary: diffSummary, output_summary: output.slice(-1000),
+      ticket: db.getTicket(ticket.id)
     });
   } catch (err) {
-    const store2 = loadStore();
-    const t2 = store2.tickets[ticket.id];
+    const t2 = db.getTicket(ticket.id);
     if (t2) {
       const lastRes = (t2.activity || []).find(a => a.action === 'resource');
       if (lastRes) {
         const p = Object.fromEntries(lastRes.detail.split(' ').map(s => s.split('=')));
-        t2.total_cpu = p.cpu || '0';
-        t2.total_elapsed = p.elapsed || '0';
+        db.updateTicket(ticket.id, {
+          total_cpu: p.cpu || '0',
+          total_elapsed: p.elapsed || '0'
+        });
       }
-      // On timeout/error: commit whatever was done, move to review, let user decide
       try { runGit(`add -A`, worktreePath); } catch {}
       try { runGit(`commit -m "${ticket.id}: partial (error: ${err.message.slice(0, 80).replace(/"/g, '')})"`, worktreePath); } catch {}
-      logActivity(store2, ticket.id, 'implement_error', err.message);
-      t2.stage = 'review';
-      t2.status = 'idle';
-      t2.updated_at = new Date().toISOString();
-      saveStore(store2);
+      db.logActivity(ticket.id, 'implement_error', err.message);
+      db.updateTicket(ticket.id, { stage: 'review', status: 'idle' });
       res.json({ error: err.message, note: 'Changes auto-committed. Choose: continue (restart implementation) or review and cherry-pick.' });
     } else {
-      logActivity(store, ticket.id, 'implement_error', err.message);
-      saveStore(store);
+      db.logActivity(ticket.id, 'implement_error', err.message);
       res.status(500).json({ error: err.message });
     }
   }
@@ -582,113 +507,89 @@ Work in: ${worktreePath}`;
 
 // ── Stage 3: Review feedback ──────────────────────────────
 app.post('/api/tickets/:id/feedback', async (req, res) => {
-  const store = loadStore();
-  const ticket = getTicket(store, req.params.id);
+  const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
 
   const { feedback } = req.body;
   if (!feedback || !feedback.trim()) return res.status(400).json({ error: 'Feedback required' });
 
-  ticket.stage = 'clarification';
-  ticket.review_feedback = feedback.trim();
-  ticket.plan = null;
-  ticket.updated_at = new Date().toISOString();
-  logActivity(store, ticket.id, 'review_feedback', feedback.trim().slice(0, 300));
+  db.updateTicket(ticket.id, {
+    stage: 'clarification',
+    review_feedback: feedback.trim(),
+    plan: null
+  });
+  db.logActivity(ticket.id, 'review_feedback', feedback.trim().slice(0, 300));
 
-  // Preserve worktree — prior commits and files stay intact for Continue or re-implementation
-
-  saveStore(store);
-  res.json({ success: true, message: 'Ticket moved back to clarification', ticket });
+  res.json({ success: true, message: 'Ticket moved back to clarification', ticket: db.getTicket(ticket.id) });
 });
 
 // ── Stage 4: Ready → cherry-pick + close ──────────────────
 app.post('/api/tickets/:id/ready', async (req, res) => {
-  const store = loadStore();
-  const ticket = getTicket(store, req.params.id);
+  let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
 
   try {
-    // Check if there are any changes to commit
     let hasChanges = false;
     try { runGit(`diff --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
     try { runGit(`diff --cached --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
 
     if (!hasChanges) {
-      logActivity(store, ticket.id, 'no_changes', 'No code changes to commit — closing ticket directly');
-      ticket.stage = 'done';
-      ticket.commit_sha = null;
-      ticket.updated_at = new Date().toISOString();
-      saveStore(store);
-      res.json({ success: true, commit_sha: null, note: 'No changes to cherry-pick', ticket });
+      db.logActivity(ticket.id, 'no_changes', 'No code changes to commit — closing ticket directly');
+      db.updateTicket(ticket.id, { stage: 'done', commit_sha: null });
+      res.json({ success: true, commit_sha: null, note: 'No changes to cherry-pick', ticket: db.getTicket(ticket.id) });
       return;
     }
 
     const commitMsg = `${ticket.id}: ${ticket.title}`;
-
-    // Stage all changes
     runGit(`add -A`, ticket.worktree_path);
 
-    // Squash everything into one clean commit
-    // Find the merge-base with main, soft-reset to it, then single commit
     try {
       const mergeBase = runGit(`merge-base main ${ticket.branch_name}`);
       runGit(`reset --soft ${mergeBase}`, ticket.worktree_path);
-      logActivity(store, ticket.id, 'squashed', `All commits squashed to merge-base ${mergeBase.slice(0, 7)}`);
+      db.logActivity(ticket.id, 'squashed', `All commits squashed to merge-base ${mergeBase.slice(0, 7)}`);
     } catch {
-      // If merge-base fails (e.g. no common ancestor), just use the current state
-      logActivity(store, ticket.id, 'squash_skipped', 'Could not find merge-base, committing as-is');
+      db.logActivity(ticket.id, 'squash_skipped', 'Could not find merge-base, committing as-is');
     }
 
     runGit(`commit -m "${commitMsg}"`, ticket.worktree_path);
     const commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-    logActivity(store, ticket.id, 'committed', commitSha);
+    db.logActivity(ticket.id, 'committed', commitSha);
 
-    // Rebase onto main before cherry-pick to avoid conflicts
     try {
       runGit(`checkout ${ticket.branch_name}`);
       runGit(`rebase main`);
       runGit(`checkout main`);
     } catch (err) {
-      logActivity(store, ticket.id, 'rebase_failed', err.message);
-      // Try to abort rebase and fall through to cherry-pick anyway
+      db.logActivity(ticket.id, 'rebase_failed', err.message);
       try { runGit(`rebase --abort`); } catch {}
       runGit(`checkout main`);
     }
 
     runGit(`cherry-pick ${commitSha}`);
-    logActivity(store, ticket.id, 'cherry_picked', commitSha);
+    db.logActivity(ticket.id, 'cherry_picked', commitSha);
 
-    ticket.stage = 'done';
-    ticket.commit_sha = commitSha;
-    ticket.updated_at = new Date().toISOString();
-    saveStore(store);
-
-    res.json({ success: true, commit_sha: commitSha, ticket });
+    db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
+    res.json({ success: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
   } catch (err) {
-    logActivity(store, ticket.id, 'ready_error', err.message);
-    saveStore(store);
+    db.logActivity(ticket.id, 'ready_error', err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    // Always clean up worktree and branch, even on error
-    const wt = ticket.worktree_path;
-    const bn = ticket.branch_name;
-    try { runGit(`worktree remove --force ${wt}`); } catch {}
-    try { runGit(`branch -D ${bn}`); } catch {}
-    if (fs.existsSync(wt)) {
+    const wt = db.getTicket(req.params.id)?.worktree_path;
+    const bn = db.getTicket(req.params.id)?.branch_name;
+    try { if (wt) runGit(`worktree remove --force ${wt}`); } catch {}
+    try { if (bn) runGit(`branch -D ${bn}`); } catch {}
+    if (wt && fs.existsSync(wt)) {
       try { fs.rmSync(wt, { recursive: true, force: true }); } catch {}
     }
-    ticket.worktree_path = null;
-    ticket.branch_name = null;
-    saveStore(store);
+    db.updateTicket(req.params.id, { worktree_path: null, branch_name: null });
   }
 });
 
-// Delete ticket
+// ── Delete ticket ─────────────────────────────────────────
 app.delete('/api/tickets/:id', (req, res) => {
-  const store = loadStore();
-  const ticket = store.tickets[req.params.id];
+  const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   if (ticket.worktree_path && fs.existsSync(ticket.worktree_path)) {
@@ -698,15 +599,13 @@ app.delete('/api/tickets/:id', (req, res) => {
     try { runGit(`branch -D ${ticket.branch_name}`); } catch {}
   }
 
-  delete store.tickets[req.params.id];
-  saveStore(store);
+  db.deleteTicket(req.params.id);
   res.json({ success: true });
 });
 
-// Get diff
+// ── Get diff ──────────────────────────────────────────────
 app.get('/api/tickets/:id/diff', (req, res) => {
-  const store = loadStore();
-  const ticket = store.tickets[req.params.id];
+  const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (!ticket.worktree_path || !fs.existsSync(ticket.worktree_path)) {
     return res.json({ diff: '(no worktree available)' });
@@ -746,7 +645,7 @@ app.get('/api/run/:id', (req, res) => {
   res.json({ status: r.status, output });
 });
 
-// Dry-run pre-push hook on main checkout (top-level) — streaming
+// Dry-run pre-push hook
 app.post('/api/prepush', (req, res) => {
   const hookPath = path.join(PYXEN_DIR, '.githooks', 'pre-push');
   if (!fs.existsSync(hookPath)) return res.status(400).json({ error: 'Pre-push hook not found' });
@@ -765,14 +664,13 @@ app.post('/api/prepush', (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────────
-// Crash recovery: reset any tickets stuck in "running" from a previous crash
+// Crash recovery: reset any tickets stuck in "running"
 (function recoverStuckTickets() {
-  const store = loadStore();
+  const ids = db.getTicketIds();
   let changed = false;
-  for (const tid of Object.keys(store.tickets)) {
-    const t = store.tickets[tid];
-    if (t.status === 'running') {
-      // Check if opencode session is still alive
+  for (const tid of ids) {
+    const t = db.getTicket(tid);
+    if (t && t.status === 'running') {
       let alive = false;
       if (t.ocode_session) {
         try {
@@ -781,21 +679,19 @@ app.post('/api/prepush', (req, res) => {
         } catch {}
       }
       if (!alive) {
-        t.status = 'idle';
-        t.updated_at = new Date().toISOString();
-        if (!t.activity) t.activity = [];
-        t.activity.unshift({ action: 'recovered', detail: 'Server restarted — previous opencode session gone, reset to idle', time: new Date().toISOString() });
+        db.updateTicketField(tid, 'status', 'idle');
+        db.logActivity(tid, 'recovered', 'Server restarted — previous opencode session gone, reset to idle');
         changed = true;
         console.log(`Recovered: ${tid} reset to idle (session not alive)`);
       }
     }
   }
-  if (changed) saveStore(store);
+  if (changed) console.log('Crash recovery complete');
 })();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Pyxen Jira Dashboard running on http://0.0.0.0:${PORT}`);
   console.log(`   Pyxen: ${PYXEN_DIR}`);
   console.log(`   OpenCode: ${OPENCODE_BIN}`);
-  console.log(`   Data: ${DB_FILE}`);
+  console.log(`   Data: SQLite at data/store.db`);
 });

@@ -9,6 +9,13 @@ data/*.log
 data/*.backup
 *.bak
 
+# SQLite runtime database (binary; rebuilt from schema + seed on
+# first run if missing).  data/store.json.migrated IS tracked:
+# it's the canonical JSON source of truth that can rebuild the DB.
+data/store.db
+data/store.db-shm
+data/store.db-wal
+
 # Environment / secrets
 .env
 .env.*
