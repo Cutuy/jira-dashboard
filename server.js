@@ -2,6 +2,7 @@ const express = require('express');
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const db = require('./db');
 
 const PORT = process.env.PORT || 3006;
@@ -21,7 +22,7 @@ const STAGE_LABELS = {
 
 // ── Helpers ───────────────────────────────────────────────
 function uid() {
-  return Date.now().toString(36).toUpperCase();
+  return crypto.randomBytes(6).toString('hex');
 }
 
 // ── OpenCode runner ───────────────────────────────────────
@@ -525,26 +526,83 @@ app.post('/api/tickets/:id/feedback', async (req, res) => {
 });
 
 // ── Stage 4: Ready → cherry-pick + close ──────────────────
+// Contract: the squash + cherry-pick into the main checkout MUST
+// succeed before the worktree (and its branch) are deleted.
+// If anything fails — broken worktree, no changes, squash error,
+// rebase conflict, cherry-pick conflict — the ticket stays in
+// 'review' with an activity entry explaining the failure.  The
+// worktree is left intact so the user can investigate, retry, or
+// commit manually.
+function cleanupWorktreeAfterSuccess(ticketId) {
+  const t = db.getTicket(ticketId);
+  if (!t) return;
+  const wt = t.worktree_path;
+  const bn = t.branch_name;
+  if (wt) {
+    try { runGit(`worktree remove --force ${wt}`); }
+    catch (e) { db.logActivity(ticketId, 'cleanup_warn', `worktree remove failed (non-fatal): ${e.message}`); }
+  }
+  if (bn) {
+    try { runGit(`branch -D ${bn}`); }
+    catch (e) { db.logActivity(ticketId, 'cleanup_warn', `branch delete failed (non-fatal): ${e.message}`); }
+  }
+  if (wt && fs.existsSync(wt)) {
+    try { fs.rmSync(wt, { recursive: true, force: true }); }
+    catch (e) { db.logActivity(ticketId, 'cleanup_warn', `rm worktree dir failed (non-fatal): ${e.message}`); }
+  }
+  db.updateTicket(ticketId, { worktree_path: null, branch_name: null });
+}
+
 app.post('/api/tickets/:id/ready', async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
 
+  // Pre-flight integrity check: refuse to silently close a ticket
+  // whose worktree is broken (the MQWSMW10 bug).  If the .git
+  // pointer is missing or the branch doesn't resolve, bail loudly.
+  if (!ticket.worktree_path || !fs.existsSync(path.join(ticket.worktree_path, '.git'))) {
+    const msg = `Worktree integrity check failed: ${ticket.worktree_path || '(unset)'}/.git is missing or invalid. Cherry-pick aborted — investigate manually before retrying.`;
+    db.logActivity(ticket.id, 'ready_error', msg);
+    return res.status(500).json({ error: msg, ticket: db.getTicket(ticket.id) });
+  }
   try {
+    runGit(`rev-parse --verify ${ticket.branch_name}`, ticket.worktree_path);
+  } catch (err) {
+    const msg = `Worktree integrity check failed: branch '${ticket.branch_name}' does not resolve in the worktree (${err.message}). Cherry-pick aborted — investigate manually.`;
+    db.logActivity(ticket.id, 'ready_error', msg);
+    return res.status(500).json({ error: msg, ticket: db.getTicket(ticket.id) });
+  }
+
+  let commitSha = null;
+  try {
+    // Detect any work to merge: uncommitted changes OR unmerged commits
+    // on the branch.  Previously we only checked the working-tree diff,
+    // which silently missed the case where opencode committed everything
+    // to the branch (no working-tree diff, but real commits to ship).
     let hasChanges = false;
     try { runGit(`diff --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
     try { runGit(`diff --cached --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
+    if (!hasChanges) {
+      try {
+        const ahead = parseInt(runGit(`rev-list --count main..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
+        if (ahead > 0) hasChanges = true;
+      } catch {}
+    }
 
     if (!hasChanges) {
-      db.logActivity(ticket.id, 'no_changes', 'No code changes to commit — closing ticket directly');
-      db.updateTicket(ticket.id, { stage: 'done', commit_sha: null });
-      res.json({ success: true, commit_sha: null, note: 'No changes to cherry-pick', ticket: db.getTicket(ticket.id) });
-      return;
+      // No work to merge.  Don't auto-close — a no-op "Ready" might
+      // mean opencode produced nothing (e.g., it errored mid-run)
+      // and the user should re-implement, not silently mark done.
+      const msg = 'No uncommitted changes and no commits ahead of main on this branch. Opencode may have produced nothing — ticket stays in review so you can Continue (re-implement) or investigate.';
+      db.logActivity(ticket.id, 'no_changes', msg);
+      return res.status(409).json({ error: msg, ticket: db.getTicket(ticket.id) });
     }
 
     const commitMsg = `${ticket.id}: ${ticket.title}`;
     runGit(`add -A`, ticket.worktree_path);
 
+    // Squash everything into one clean commit
     try {
       const mergeBase = runGit(`merge-base main ${ticket.branch_name}`);
       runGit(`reset --soft ${mergeBase}`, ticket.worktree_path);
@@ -554,9 +612,10 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     }
 
     runGit(`commit -m "${commitMsg}"`, ticket.worktree_path);
-    const commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+    commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
     db.logActivity(ticket.id, 'committed', commitSha);
 
+    // Rebase onto main before cherry-pick to reduce conflict surface
     try {
       runGit(`checkout ${ticket.branch_name}`);
       runGit(`rebase main`);
@@ -564,26 +623,29 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     } catch (err) {
       db.logActivity(ticket.id, 'rebase_failed', err.message);
       try { runGit(`rebase --abort`); } catch {}
-      runGit(`checkout main`);
+      runGit(`checkout main`).catch(() => {});
+      // Rebase failed — still try the cherry-pick (some bases are
+      // already in main), but if it also fails the outer catch
+      // will hold the worktree intact.
     }
 
     runGit(`cherry-pick ${commitSha}`);
     db.logActivity(ticket.id, 'cherry_picked', commitSha);
 
     db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
+
+    // SUCCESS — only now is it safe to clean up the worktree.
+    cleanupWorktreeAfterSuccess(ticket.id);
+
     res.json({ success: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
   } catch (err) {
-    db.logActivity(ticket.id, 'ready_error', err.message);
-    res.status(500).json({ error: err.message });
-  } finally {
-    const wt = db.getTicket(req.params.id)?.worktree_path;
-    const bn = db.getTicket(req.params.id)?.branch_name;
-    try { if (wt) runGit(`worktree remove --force ${wt}`); } catch {}
-    try { if (bn) runGit(`branch -D ${bn}`); } catch {}
-    if (wt && fs.existsSync(wt)) {
-      try { fs.rmSync(wt, { recursive: true, force: true }); } catch {}
-    }
-    db.updateTicket(req.params.id, { worktree_path: null, branch_name: null });
+    // FAILURE — keep the worktree intact so the user can investigate.
+    // The squashed commit (if we got that far) is still on the branch.
+    const tail = commitSha
+      ? ` Squashed commit ${commitSha.slice(0, 7)} is still on branch ${ticket.branch_name} in the worktree.`
+      : '';
+    db.logActivity(ticket.id, 'ready_error', `${err.message}${tail} Worktree preserved — ticket stays in review.`);
+    res.status(500).json({ error: err.message, ticket: db.getTicket(ticket.id) });
   }
 });
 
