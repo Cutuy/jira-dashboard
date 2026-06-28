@@ -255,6 +255,239 @@ function ensureWorktreesDir() {
   if (!fs.existsSync(WORKTREES_DIR)) fs.mkdirSync(WORKTREES_DIR, { recursive: true });
 }
 
+// ── Unit test runner ──────────────────────────────────────
+// Auto-detect the test framework in a worktree and run the unit
+// test suite.  Results stream to the ticket's test_runs table
+// and broadcast over SSE so the UI can show a pass/fail pill
+// without polling.  The runner is fire-and-forget: the HTTP
+// request that triggers it returns immediately with a runId,
+// and the SSE channel delivers the final status.
+//
+// Detection order (most specific first):
+//   1. package.json with a "test" script  → npm test
+//   2. go.mod                            → go test ./...
+//   3. Cargo.toml                        → cargo test
+//   4. pyproject.toml / setup.py / pytest.ini / tests dir
+//                                      → pytest (or pyxen.test for the pyxen repo)
+//   5. fallthrough                       → shell: bash scripts/test.sh or similar
+//
+// We keep this intentionally simple — NO dependency resolution,
+// NO test discovery tricks.  Whatever the project ships with
+// is what gets run, so failures are real and reproducible.
+
+function detectTestFramework(worktreePath) {
+  if (!worktreePath || !fs.existsSync(worktreePath)) return null;
+
+  const has = (p) => fs.existsSync(path.join(worktreePath, p));
+  const read = (p) => { try { return fs.readFileSync(path.join(worktreePath, p), 'utf-8'); } catch { return ''; } };
+
+  // npm — package.json with scripts.test
+  if (has('package.json')) {
+    try {
+      const pkg = JSON.parse(read('package.json'));
+      if (pkg.scripts && pkg.scripts.test && pkg.scripts.test.trim() !== 'echo "Error: no test specified" && exit 1') {
+        return { framework: 'npm', command: 'npm test --silent' };
+      }
+    } catch {}
+  }
+
+  // go
+  if (has('go.mod')) {
+    return { framework: 'go', command: 'go test ./...' };
+  }
+
+  // cargo
+  if (has('Cargo.toml')) {
+    return { framework: 'cargo', command: 'cargo test --quiet' };
+  }
+
+  // pyxen-specific shortcut: use the meta-runner that aggregates
+  // every module's `_main()` test function.  This is the primary
+  // path for the pyxen project this dashboard was built for.
+  // Use the project's .venv python when available — worktrees don't
+  // ship their own venv, and `python` (vs python3) is rarely on PATH
+  // on modern Linux.
+  const isPyxen = has('pyproject.toml') && /name\s*=\s*["']pyxen["']/.test(read('pyproject.toml'));
+  if (isPyxen) {
+    const venvPy = path.join(PYXEN_DIR, '.venv', 'bin', 'python');
+    const py = fs.existsSync(venvPy) ? venvPy : 'python3';
+    const envOverride = `PYTHONPATH=${path.join(PYXEN_DIR, 'src')}`;
+    const cmd = process.env.PYXEN_TEST_CMD || `${envOverride} ${py} -m pyxen.test`;
+    return { framework: 'pytest', command: cmd };
+  }
+
+  // generic pytest
+  if (has('pyproject.toml') || has('pytest.ini') || has('setup.py') || has('tests/') || has('test/')) {
+    const venvPy = path.join(PYXEN_DIR, '.venv', 'bin', 'python');
+    const py = fs.existsSync(venvPy) ? venvPy : 'python3';
+    return { framework: 'pytest', command: `${py} -m pytest -x --tb=short -q` };
+  }
+
+  // fallback: scripts/test.sh or scripts/run-tests.sh
+  if (has('scripts/test.sh')) return { framework: 'shell', command: 'bash scripts/test.sh' };
+  if (has('scripts/run-tests.sh')) return { framework: 'shell', command: 'bash scripts/run-tests.sh' };
+
+  return null;
+}
+
+// Run a test command, capturing stdout+stderr into one stream.
+// Resolves with { exit_code, output, summary, duration_ms }.
+function execTestCommand(command, cwd, timeoutMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+    const finish = (status, extra = {}) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({
+        status,
+        exit_code: extra.exit_code ?? null,
+        output: (stdout + (stderr ? '\n--- stderr ---\n' + stderr : '')).slice(-64 * 1024),
+        duration_ms: Date.now() - start,
+      });
+    };
+
+    let proc;
+    try {
+      proc = spawn('bash', ['-lc', command], {
+        cwd,
+        env: { ...process.env, PYTHONPATH: path.join(PYXEN_DIR, 'src') },
+        timeout: timeoutMs,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      return finish('error', { exit_code: -1, output: 'spawn error: ' + err.message });
+    }
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', code => {
+      const status = code === 0 ? 'pass' : 'fail';
+      finish(status, { exit_code: code });
+    });
+    proc.on('error', err => finish('error', { exit_code: -1, output: 'proc error: ' + err.message }));
+  });
+}
+
+// Parse common test summary lines out of pytest/pytest-style output.
+// Returns { passed, failed, errored, skipped } or null if nothing matched.
+function parseTestSummary(output) {
+  if (!output) return null;
+  // pytest: "= 12 passed, 1 failed, 2 skipped in 0.42s ="
+  const m = output.match(/(\d+)\s+passed(?:.*?(\d+)\s+failed)?(?:.*?(\d+)\s+error(?:ed|s)?)?(?:.*?(\d+)\s+skipped)?/i);
+  if (m && (m[1] || m[2])) {
+    return {
+      passed: parseInt(m[1] || '0', 10),
+      failed: parseInt(m[2] || '0', 10),
+      errored: parseInt(m[3] || '0', 10),
+      skipped: parseInt(m[4] || '0', 10),
+    };
+  }
+  // go test: "ok  \tfoo\t0.123s" / "FAIL\tfoo\t..."
+  const goOk = (output.match(/^ok\s/gm) || []).length;
+  const goFail = (output.match(/^FAIL\s/gm) || []).length;
+  if (goOk + goFail > 0) return { passed: goOk, failed: goFail, errored: 0, skipped: 0 };
+  // cargo test
+  const cargoPass = (output.match(/test result: ok\.\s+(\d+)\s+passed/) || [])[1];
+  if (cargoPass) return { passed: parseInt(cargoPass, 10), failed: 0, errored: 0, skipped: 0 };
+  return null;
+}
+
+function formatSummary(parsed, status) {
+  if (!parsed) return status === 'pass' ? 'All tests passed' : (status === 'fail' ? 'Tests failed' : status);
+  const parts = [];
+  if (parsed.passed)  parts.push(`${parsed.passed} passed`);
+  if (parsed.failed)  parts.push(`${parsed.failed} failed`);
+  if (parsed.errored) parts.push(`${parsed.errored} errored`);
+  if (parsed.skipped) parts.push(`${parsed.skipped} skipped`);
+  return parts.length ? parts.join(', ') : status;
+}
+
+// Public: kick off the test suite for a ticket's worktree.
+// Fire-and-forget: returns the runId immediately; SSE delivers status.
+function runTicketTests(ticketId, triggeredBy = 'auto') {
+  const ticket = db.getTicket(ticketId);
+  if (!ticket) return null;
+  const wt = ticket.worktree_path;
+  if (!wt || !fs.existsSync(wt)) {
+    const runId = db.createTestRun(ticketId, null, null, triggeredBy);
+    db.finalizeTestRun(runId, {
+      status: 'skip',
+      output: 'No worktree available — tests skipped.',
+      summary: 'skipped (no worktree)',
+    });
+    sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'skip' });
+    return runId;
+  }
+
+  const det = detectTestFramework(wt);
+  if (!det) {
+    const runId = db.createTestRun(ticketId, null, null, triggeredBy);
+    db.finalizeTestRun(runId, {
+      status: 'skip',
+      output: 'No recognized test framework in worktree (looked for npm/go/cargo/pytest).',
+      summary: 'skipped (no framework detected)',
+    });
+    sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'skip' });
+    return runId;
+  }
+
+  const runId = db.createTestRun(ticketId, det.framework, det.command, triggeredBy);
+  sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'running', framework: det.framework });
+
+  // Detached promise — caller doesn't await.
+  (async () => {
+    const result = await execTestCommand(det.command, wt, 300_000);
+    const parsed = parseTestSummary(result.output);
+    const summary = formatSummary(parsed, result.status);
+    const row = db.finalizeTestRun(runId, { ...result, summary });
+    db.logActivity(ticketId, 'test_' + result.status, `${det.framework}: ${summary} (${Math.round((result.duration_ms || 0) / 100) / 10}s)`);
+    sseBroadcast(ticketId, 'test_status', {
+      run_id: runId,
+      status: row.status,
+      framework: det.framework,
+      summary: row.summary,
+      exit_code: row.exit_code,
+      duration_ms: row.duration_ms,
+    });
+  })().catch(err => {
+    db.finalizeTestRun(runId, { status: 'error', output: 'runner crash: ' + err.message });
+    sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'error' });
+  });
+
+  return runId;
+}
+
+// Build a concise textual summary of the latest test run for a ticket,
+// suitable for embedding into the implementation prompt as context
+// when the user clicks "Continue" on a ticket in review.
+function buildTestContextForPrompt(ticketId) {
+  const latest = db.getLatestTestRun(ticketId);
+  if (!latest) return '';
+  if (latest.status === 'running') return '';
+  const lines = [];
+  lines.push(`Last unit-test run (${latest.triggered_by || 'auto'}, ${new Date(latest.started_at).toISOString()}):`);
+  lines.push(`  framework: ${latest.framework || '(unknown)'}`);
+  lines.push(`  command:   ${latest.command || '(unknown)'}`);
+  lines.push(`  status:    ${latest.status}`);
+  if (latest.summary) lines.push(`  summary:   ${latest.summary}`);
+  if (latest.exit_code != null) lines.push(`  exit_code: ${latest.exit_code}`);
+  if (latest.output && latest.status !== 'pass') {
+    // Show the last 60 lines so opencode sees the actual failure shape.
+    const tail = latest.output.split('\n').slice(-60).join('\n');
+    lines.push('  output (last 60 lines):');
+    lines.push(tail.split('\n').map(l => '    ' + l).join('\n'));
+  }
+  if (latest.status === 'fail' || latest.status === 'error') {
+    lines.push('');
+    lines.push('The previous implementation FAILED these tests. You may either:');
+    lines.push('  (a) ask clarifying questions about the failures, OR');
+    lines.push('  (b) propose a fix and proceed to implementation directly.');
+  }
+  return lines.join('\n');
+}
+
 // ── Express app ───────────────────────────────────────────
 const app = express();
 app.use(express.json());
@@ -280,7 +513,8 @@ app.get('/api/tickets/:id', (req, res) => {
   const t = db.getTicket(req.params.id);
   if (!t) return res.status(404).json({ error: 'Ticket not found' });
   const stageResources = db.getStageResources(req.params.id);
-  res.json({ ...t, stage_resources: stageResources });
+  const latestTest = db.getLatestTestRun(req.params.id);
+  res.json({ ...t, stage_resources: stageResources, latest_test: latestTest });
 });
 
 // ── SSE stream ────────────────────────────────────────────
@@ -301,14 +535,20 @@ app.get('/api/tickets/:id/stream', (req, res) => {
 
   // Lightweight poll for non-resource changes (activity, status, stage)
   let lastUpd = t.updated_at || '';
+  let lastTestRunId = (db.getLatestTestRun(ticketId) || {}).id || 0;
   const poll = setInterval(() => {
     try {
       const t2 = db.getTicket(ticketId);
       if (!t2) { clearInterval(poll); res.end(); return; }
-      if (t2.updated_at !== lastUpd || t2.status === 'running') {
+      const latestTest = db.getLatestTestRun(ticketId);
+      const testRunId = latestTest ? latestTest.id : 0;
+      const ticketChanged = t2.updated_at !== lastUpd || t2.status === 'running';
+      const testChanged = testRunId !== lastTestRunId;
+      if (ticketChanged || testChanged) {
         lastUpd = t2.updated_at;
+        lastTestRunId = testRunId;
         const sr = db.getStageResources(ticketId);
-        const payload = { ...t2, stage_resources: sr };
+        const payload = { ...t2, stage_resources: sr, latest_test: latestTest };
         res.write(`event: ticket\ndata: ${JSON.stringify(payload)}\n\n`);
       }
     } catch {}
@@ -544,7 +784,8 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
   if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
 
   // If coming from review (continue), move back to implementation
-  if (ticket.stage === 'review') {
+  const wasReview = ticket.stage === 'review';
+  if (wasReview) {
     db.updateTicket(ticket.id, { stage: 'implementation' });
     db.logActivity(ticket.id, 'continued', 'Resuming implementation from review');
     ticket = db.getTicket(ticket.id);
@@ -583,6 +824,17 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       `Q: ${q.question}\nA: ${q.answer || 'N/A'}`
     ).join('\n');
 
+    // If resuming from review (Continue), inject the latest unit-test
+    // report as ticket context so opencode can either fix what's broken
+    // or ask clarifying questions about the failures.
+    const testContext = wasReview ? buildTestContextForPrompt(ticket.id) : '';
+    const reviewContext = ticket.review_feedback
+      ? `\n\nReview feedback from previous implementation:\n${ticket.review_feedback}`
+      : '';
+    const testContextBlock = testContext
+      ? `\n\n${testContext}`
+      : '';
+
     const prompt = `You are implementing changes for a ticket in the pyxen project. Work in the directory: ${worktreePath}
 
 Ticket: ${ticket.title}
@@ -592,7 +844,7 @@ Clarification Q&A:
 ${qaText}
 
 Implementation Plan:
-${ticket.plan}
+${ticket.plan}${reviewContext}${testContextBlock}
 
 Your job:
 1. Read the relevant source files to understand the current code
@@ -680,9 +932,16 @@ Work in: ${worktreePath}`;
     }
     db.logActivity(ticket.id, 'implement_done', diffSummary.slice(0, 500));
 
+    // Kick off the unit-test suite on the worktree.  Fire-and-forget:
+    // we don't block the implement response on test results — the
+    // SSE channel delivers test_status when the run finishes, and the
+    // UI renders the pass/fail pill without polling.
+    const testRunId = runTicketTests(ticket.id, 'auto');
+
     res.json({
       success: true, worktree_path: worktreePath, branch_name: branchName,
       diff_summary: diffSummary, output_summary: output.slice(-1000),
+      test_run_id: testRunId,
       ticket: db.getTicket(ticket.id)
     });
   } catch (err) {
@@ -700,7 +959,10 @@ Work in: ${worktreePath}`;
       try { runGit(`commit -m "${ticket.id}: partial (error: ${err.message.slice(0, 80).replace(/"/g, '')})"`, worktreePath); } catch {}
       db.logActivity(ticket.id, 'implement_error', err.message);
       db.updateTicket(ticket.id, { stage: 'review', status: 'idle' });
-      res.json({ error: err.message, note: 'Changes auto-committed. Choose: continue (restart implementation) or review and cherry-pick.' });
+      // Still run tests on the partial work — the user needs to know
+      // whether the partial state passes / fails before continuing.
+      const testRunId = runTicketTests(ticket.id, 'auto');
+      res.json({ error: err.message, test_run_id: testRunId, note: 'Changes auto-committed. Choose: continue (restart implementation) or review and cherry-pick.' });
     } else {
       db.logActivity(ticket.id, 'implement_error', err.message);
       res.status(500).json({ error: err.message });
@@ -903,6 +1165,29 @@ app.get('/api/tickets/:id/diff', (req, res) => {
   } catch (err) {
     res.json({ diff: `Error: ${err.message}`, files: [], explorer_prefix: null });
   }
+});
+
+// ── Unit-test results per ticket ───────────────────────────
+// Returns the latest run (for popup pill + report) plus a small
+// history so the user can see whether a re-run fixed things.
+// Output is truncated server-side already (db.finalizeTestRun).
+app.get('/api/tickets/:id/tests', (req, res) => {
+  const ticket = db.getTicket(req.params.id);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  const latest = db.getLatestTestRun(req.params.id);
+  const history = db.getTestRuns(req.params.id, 10);
+  res.json({ latest, history });
+});
+
+// Manually re-run the unit-test suite for a ticket's worktree.
+// Used by the "Re-run tests" button on the popup.  Returns a
+// runId immediately; the final status arrives via the SSE
+// `test_status` event.
+app.post('/api/tickets/:id/tests/run', (req, res) => {
+  const ticket = db.getTicket(req.params.id);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  const runId = runTicketTests(req.params.id, 'manual');
+  res.json({ run_id: runId, status: 'running' });
 });
 
 // Run unit tests on main checkout (top-level) — streaming

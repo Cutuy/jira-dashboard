@@ -15,6 +15,20 @@ interface S {
   tokens_in: number; tokens_out: number; cost: number; calls: number;
 }
 interface SR { clarification: S|null; implementation: S|null; total: S }
+interface TestRun {
+  id: number
+  ticket_id: string
+  status: 'running' | 'pass' | 'fail' | 'skip' | 'error'
+  framework: string | null
+  command: string | null
+  exit_code: number | null
+  summary: string | null
+  output: string
+  duration_ms: number | null
+  triggered_by: string
+  started_at: string
+  finished_at: string | null
+}
 interface T {
   id: string; title: string; content: string; stage: string; status?: string
   plan: string | null; worktree_path: string | null; branch_name: string | null
@@ -22,6 +36,7 @@ interface T {
   questions: Q[]; activity: A[]; created_at: string; updated_at: string
   total_cpu?: string; total_elapsed?: string
   stage_resources?: SR
+  latest_test?: TestRun | null
 }
 
 type Sug = { id: string; title: string; content: string }
@@ -360,6 +375,112 @@ function SuggestionCard({ sug, onAccept, onDismiss }: { sug: Sug; onAccept: (s: 
   )
 }
 
+// ─────────────────────────────────────────────────────────
+// TestReportPanel — shows pass/fail pill + summary + collapsible
+// output for the latest unit-test run.  Lives inside the ticket
+// popup on the review / done stages.  Reads from
+// `ticket.latest_test` (auto-refreshed via SSE).
+//
+// UX:
+//   • running → amber pill with spinner; output hidden
+//   • pass    → green pill + summary; output collapsible
+//   • fail    → red pill + summary + last 60 lines auto-shown
+//   • skip    → zinc pill + skip reason
+//   • error   → red pill + crash message
+//   • missing → "No tests run yet" (with Re-run button)
+// ─────────────────────────────────────────────────────────
+function TestReportPanel({
+  test, onRerun, rerunning, autoExpandFail = true,
+}: {
+  test?: TestRun | null
+  onRerun: () => void
+  rerunning: boolean
+  autoExpandFail?: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (autoExpandFail && test && (test.status === 'fail' || test.status === 'error')) {
+      setExpanded(true)
+    }
+  }, [test?.id, test?.status, autoExpandFail])
+
+  if (!test) {
+    return (
+      <div className="flex items-center justify-between rounded-md ring-1 ring-zinc-200 bg-zinc-50 px-3 py-2.5">
+        <div className="flex items-center gap-2 t-small text-zinc-500">
+          <Circle className="h-3.5 w-3.5 text-zinc-400" />
+          No tests run yet
+        </div>
+        <Btn variant="outline" size="sm" onClick={onRerun} disabled={rerunning}>
+          {rerunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Run tests
+        </Btn>
+      </div>
+    )
+  }
+
+  const pill = (() => {
+    switch (test.status) {
+      case 'running': return <StatusPill kind="info"><Loader2 className="h-3 w-3 animate-spin" /> Running tests</StatusPill>
+      case 'pass':    return <StatusPill kind="success"><Check className="h-3 w-3" /> Tests passed</StatusPill>
+      case 'fail':    return <StatusPill kind="danger"><X className="h-3 w-3" /> Tests failed</StatusPill>
+      case 'skip':    return <StatusPill kind="info">Tests skipped</StatusPill>
+      case 'error':   return <StatusPill kind="danger"><X className="h-3 w-3" /> Test runner error</StatusPill>
+    }
+  })()
+
+  const meta = [
+    test.framework && `${test.framework}`,
+    test.summary && `· ${test.summary}`,
+    test.duration_ms != null && `· ${(test.duration_ms / 1000).toFixed(1)}s`,
+    test.triggered_by && test.triggered_by !== 'auto' && `· ${test.triggered_by}`,
+  ].filter(Boolean).join(' ')
+
+  const outputLines = test.output ? test.output.split('\n') : []
+  const shownLines = expanded ? outputLines : outputLines.slice(-30)
+  const hasMore = outputLines.length > 30
+
+  return (
+    <div className="rounded-md ring-1 ring-zinc-200 bg-white overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+        <div className="flex items-center gap-2 min-w-0">
+          {pill}
+          {meta && <span className="t-small text-zinc-500 truncate">{meta}</span>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {test.output && (
+            <Btn variant="ghost" size="sm" onClick={() => setExpanded(e => !e)}>
+              {expanded ? 'Hide output' : 'View output'}
+            </Btn>
+          )}
+          <Btn variant="outline" size="sm" onClick={onRerun} disabled={rerunning || test.status === 'running'}>
+            {rerunning || test.status === 'running'
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <RefreshCw className="h-3.5 w-3.5" />}
+            Re-run
+          </Btn>
+        </div>
+      </div>
+      {test.command && (
+        <div className="px-3 py-1.5 border-t border-zinc-100 t-mono-11 text-zinc-500 truncate">
+          $ {test.command}
+        </div>
+      )}
+      {test.output && expanded && (
+        <pre className="bg-zinc-950 text-zinc-100 px-3 py-2.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+{shownLines.join('\n')}
+        </pre>
+      )}
+      {test.output && !expanded && hasMore && test.status !== 'fail' && test.status !== 'error' && (
+        <pre className="bg-zinc-950 text-zinc-100 px-3 py-2.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-40 overflow-y-auto opacity-80">
+{shownLines.join('\n')}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function ResourceMetrics({
   activity, stageResources, status,
 }: {
@@ -551,6 +672,8 @@ export default function App() {
   const [todoItems, setTodoItems] = useState<{ done: boolean; text: string }[]>([])
   const [stdoutLines, setStdoutLines] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
+  const [testExpanded, setTestExpanded] = useState(false)
+  const [testReRunning, setTestReRunning] = useState(false)
   const poll = useRef<EventSource>()
   const lastUpd = useRef('')
 
@@ -599,6 +722,7 @@ export default function App() {
       setTickets(p => p.map(x => (x.id === id ? t : x)))
       lastUpd.current = t.updated_at
       setAnswers({}); setDiff(''); setDiffFiles([]); setFeedback(''); setTodoItems([]); setStdoutLines([])
+      setTestExpanded(false); setTestReRunning(false)
       if (poll.current) { poll.current.close(); poll.current = undefined }
       const es = new EventSource(`/api/tickets/${id}/stream`)
       poll.current = es
@@ -626,6 +750,25 @@ export default function App() {
         try {
           const d = JSON.parse(e.data)
           if (d.text) setStdoutLines(p => [...p.slice(-199), d.text])
+        } catch {}
+      })
+
+      es.addEventListener('test_status', (e) => {
+        try {
+          const d = JSON.parse(e.data)
+          // Refresh latest test from server (authoritative) and notify
+          fetchJSON<TestRun>(`/api/tickets/${id}/tests`).then(({ latest }) => {
+            setSel(p => p && p.id === id ? { ...p, latest_test: latest } : p)
+            setTickets(p => p.map(x => x.id === id ? { ...x, latest_test: latest } : x))
+            if (latest && latest.status !== 'running') {
+              const stage = selRef.current?.stage || 'review'
+              const label = latest.status === 'pass' ? 'tests passed'
+                : latest.status === 'fail' ? 'tests failed'
+                : latest.status === 'error' ? 'tests errored'
+                : 'tests skipped'
+              notify(`[${stage}] ${selRef.current?.title || id}`, label)
+            }
+          }).catch(() => {})
         } catch {}
       })
 
@@ -786,6 +929,23 @@ export default function App() {
     }
   }
 
+  async function rerunTests(id: string) {
+    setTestReRunning(true)
+    try {
+      await fetchJSON(`/api/tickets/${id}/tests/run`, { method: 'POST' })
+      // The SSE test_status event will deliver the final result; we don't
+      // need to poll here.  Mark in-flight in the ticket state so the
+      // pill flips to "running" immediately.
+      setSel(p => p && p.id === id
+        ? { ...p, latest_test: { id: 0, ticket_id: id, status: 'running', framework: p.latest_test?.framework ?? null, command: null, exit_code: null, summary: null, output: '', duration_ms: null, triggered_by: 'manual', started_at: new Date().toISOString(), finished_at: null } }
+        : p)
+    } catch (e: any) {
+      setError('Re-run failed: ' + e.message)
+    } finally {
+      setTestReRunning(false)
+    }
+  }
+
   async function runTest() {
     setOut({ open: true, title: 'Test Results', text: 'Running…', status: 'running' })
     try {
@@ -942,6 +1102,47 @@ export default function App() {
                   <span className="inline-flex items-center gap-1 text-amber-600">
                     <Loader2 className="h-3 w-3 animate-spin" /> running
                   </span>
+                )}
+                {/* Compact test status indicator next to stage pill.
+                    Visible whenever there's a test result (any non-running
+                    stage with a worktree, plus done).  Click scrolls to
+                    the test panel below — anchor via id. */}
+                {sel.latest_test && (sel.stage === 'review' || sel.stage === 'done') && (
+                  <a
+                    href="#tests-panel"
+                    onClick={e => {
+                      e.preventDefault()
+                      document.getElementById('tests-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }}
+                    className="inline-flex items-center"
+                    title={sel.latest_test.summary || sel.latest_test.status}
+                  >
+                    {sel.latest_test.status === 'pass' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 px-1.5 py-0.5 t-meta font-medium">
+                        <Check className="h-3 w-3" /> tests
+                      </span>
+                    )}
+                    {sel.latest_test.status === 'fail' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 text-red-700 ring-1 ring-red-200 px-1.5 py-0.5 t-meta font-medium">
+                        <X className="h-3 w-3" /> tests
+                      </span>
+                    )}
+                    {sel.latest_test.status === 'error' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 text-red-700 ring-1 ring-red-200 px-1.5 py-0.5 t-meta font-medium">
+                        <X className="h-3 w-3" /> tests error
+                      </span>
+                    )}
+                    {sel.latest_test.status === 'skip' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 text-zinc-500 ring-1 ring-zinc-200 px-1.5 py-0.5 t-meta font-medium">
+                        tests skipped
+                      </span>
+                    )}
+                    {sel.latest_test.status === 'running' && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 ring-1 ring-blue-200 px-1.5 py-0.5 t-meta font-medium">
+                        <Loader2 className="h-3 w-3 animate-spin" /> testing…
+                      </span>
+                    )}
+                  </a>
                 )}
               </div>
               <h2 className="t-h text-zinc-900 mt-1.5 clamp-2">{sel.title}</h2>
@@ -1185,6 +1386,23 @@ export default function App() {
                       </Section>
                     )}
                     {sel.worktree_path && (
+                      <Section
+                        title="Unit tests"
+                        hint={sel.latest_test?.status === 'pass' ? 'passed' :
+                              sel.latest_test?.status === 'fail' ? 'failed' :
+                              sel.latest_test?.status === 'running' ? 'running…' :
+                              sel.latest_test?.status === 'skip' ? 'skipped' : undefined}
+                      >
+                        <div id="tests-panel">
+                        <TestReportPanel
+                          test={sel.latest_test}
+                          onRerun={() => rerunTests(sel.id)}
+                          rerunning={testReRunning}
+                        />
+                        </div>
+                      </Section>
+                    )}
+                    {sel.worktree_path && (
                       <Section title="Resource usage">
                         <div className="rounded-md ring-1 ring-zinc-200 p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
@@ -1220,6 +1438,21 @@ export default function App() {
                         <pre className="rounded-md bg-zinc-900 text-zinc-100 p-3.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
 {sel.plan}
                         </pre>
+                      </Section>
+                    )}
+                    {sel.latest_test && (
+                      <Section
+                        title="Unit tests"
+                        hint={sel.latest_test.status === 'pass' ? 'passed' :
+                              sel.latest_test.status === 'fail' ? 'failed' :
+                              sel.latest_test.status === 'skip' ? 'skipped' : undefined}
+                      >
+                        <TestReportPanel
+                          test={sel.latest_test}
+                          onRerun={() => rerunTests(sel.id)}
+                          rerunning={testReRunning}
+                          autoExpandFail={false}
+                        />
                       </Section>
                     )}
                     <Section title="Resource usage">

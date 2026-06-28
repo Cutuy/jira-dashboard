@@ -53,8 +53,24 @@ db.exec(`
     time TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS test_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'running',  -- running | pass | fail | skip | error
+    framework TEXT,                          -- pytest | npm | go | cargo | shell
+    command TEXT,                            -- exact command run (for transparency)
+    exit_code INTEGER,
+    summary TEXT,                            -- e.g. "12 passed, 1 failed"
+    output TEXT DEFAULT '',                  -- full stdout+stderr (truncated to ~64KB)
+    duration_ms INTEGER,
+    triggered_by TEXT DEFAULT 'auto',        -- auto (after implement) | manual | continue
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+
   CREATE INDEX IF NOT EXISTS idx_questions_ticket ON questions(ticket_id);
   CREATE INDEX IF NOT EXISTS idx_activity_ticket ON activity(ticket_id);
+  CREATE INDEX IF NOT EXISTS idx_test_runs_ticket ON test_runs(ticket_id, id DESC);
 `);
 
 // Migration: add type/options columns to questions (added 2026-06-27)
@@ -122,6 +138,29 @@ const stmts = {
 
   clearStageActivity: db.prepare(`
     DELETE FROM activity WHERE ticket_id = ? AND (action = 'resource' OR action = 'stage_summary') AND stage = ?
+  `),
+
+  // Test runs
+  insertTestRun: db.prepare(`
+    INSERT INTO test_runs (ticket_id, status, framework, command, triggered_by, started_at)
+    VALUES (?, 'running', ?, ?, ?, ?)
+  `),
+  finalizeTestRun: db.prepare(`
+    UPDATE test_runs SET
+      status = @status, exit_code = @exit_code, summary = @summary,
+      output = @output, duration_ms = @duration_ms, finished_at = @finished_at
+    WHERE id = @id
+  `),
+  getTestRun: db.prepare(`SELECT * FROM test_runs WHERE id = ?`),
+  getLatestTestRun: db.prepare(`
+    SELECT * FROM test_runs WHERE ticket_id = ?
+    ORDER BY id DESC LIMIT 1
+  `),
+  getTestRuns: db.prepare(`
+    SELECT * FROM test_runs WHERE ticket_id = ? ORDER BY id DESC LIMIT 20
+  `),
+  getTestRunsLimited: db.prepare(`
+    SELECT * FROM test_runs WHERE ticket_id = ? ORDER BY id DESC LIMIT ?
   `),
 
   // Count
@@ -245,6 +284,51 @@ function nextQuestionId() {
 
 function getTicketIds() {
   return stmts.getAllTicketIds.all().map(r => r.id);
+}
+
+// ── Test run API ───────────────────────────────────────────
+// One test run per row.  `triggered_by` distinguishes auto-runs
+// after implement from manual re-runs from the UI and from runs
+// triggered by the Continue button.  Output is truncated at the
+// SQL layer to keep the DB small (large logs can blow up).
+
+const TEST_OUTPUT_MAX_BYTES = 64 * 1024;
+
+function createTestRun(ticketId, framework, command, triggeredBy = 'auto') {
+  const info = stmts.insertTestRun.run(
+    ticketId, framework || null, command || null,
+    triggeredBy, new Date().toISOString()
+  );
+  return Number(info.lastInsertRowid);
+}
+
+function finalizeTestRun(runId, fields) {
+  const row = stmts.getTestRun.get(runId);
+  if (!row) return null;
+  let output = fields.output || '';
+  if (output.length > TEST_OUTPUT_MAX_BYTES) {
+    output = output.slice(0, TEST_OUTPUT_MAX_BYTES)
+      + `\n\n[output truncated to ${TEST_OUTPUT_MAX_BYTES} bytes]`;
+  }
+  stmts.finalizeTestRun.run({
+    id: runId,
+    status: fields.status,
+    exit_code: fields.exit_code ?? null,
+    summary: fields.summary || null,
+    output,
+    duration_ms: fields.duration_ms ?? null,
+    finished_at: new Date().toISOString(),
+  });
+  return stmts.getTestRun.get(runId);
+}
+
+function getLatestTestRun(ticketId) {
+  return stmts.getLatestTestRun.get(ticketId) || null;
+}
+
+function getTestRuns(ticketId, limit = 20) {
+  const capped = Math.max(1, Math.min(100, limit | 0));
+  return stmts.getTestRunsLimited.all(ticketId, capped);
 }
 
 function close() {
@@ -463,5 +547,9 @@ module.exports = {
   getStageResources,
   nextQuestionId,
   getTicketIds,
+  createTestRun,
+  finalizeTestRun,
+  getLatestTestRun,
+  getTestRuns,
   close,
 };
