@@ -12,7 +12,7 @@ interface Q { id: number; question: string; answer: string | null; round: number
 interface A { action: string; detail: string; time: string }
 interface S {
   cpu: number; elapsed: number; peak_mem: number;
-  tokens_in: string; tokens_out: string; cost: number; calls: number;
+  tokens_in: number; tokens_out: number; cost: number; calls: number;
 }
 interface SR { clarification: S|null; implementation: S|null; total: S }
 interface T {
@@ -339,6 +339,27 @@ function parseCost(s: string | undefined) {
   return parseFloat((s || '0').replace(/[$,]/g, '')) || 0
 }
 
+function SuggestionCard({ sug, onAccept, onDismiss }: { sug: Sug; onAccept: (s: Sug) => void; onDismiss: (s: Sug) => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="bg-white rounded-lg ring-1 ring-zinc-200 px-3.5 py-2.5 cursor-pointer hover:ring-zinc-400 transition-colors"
+      onClick={() => setOpen(o => !o)}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <p className={`t-body font-medium text-zinc-900 ${open ? '' : 'truncate'}`}>{sug.title}</p>
+          <p className={`t-small text-zinc-500 mt-0.5 ${open ? '' : 'clamp-2'}`}>{sug.content}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+          <button onClick={() => onAccept(sug)} className="px-2.5 py-1 rounded text-xs font-medium bg-zinc-900 text-white hover:bg-zinc-700">Accept</button>
+          <button onClick={() => onDismiss(sug)} className="px-2.5 py-1 rounded text-xs font-medium text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100">Dismiss</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ResourceMetrics({
   activity, stageResources, status,
 }: {
@@ -385,7 +406,7 @@ function ResourceMetrics({
           <MetricCompact label="Elapsed" value={`${s.elapsed}s`} />
           <MetricCompact label="Memory"  value={`${s.peak_mem.toFixed(0)} MB`} />
           <MetricCompact label="Cost"    value={fmtCost(s.cost)} />
-          {s.tokens_in !== '0' && <MetricCompact label="Tokens" value={`${s.tokens_in} in · ${s.tokens_out} out`} />}
+          {s.tokens_in > 0 && <MetricCompact label="Tokens" value={`${fmtToken(s.tokens_in)} in · ${fmtToken(s.tokens_out)} out`} />}
         </div>
       </div>
     )
@@ -406,7 +427,7 @@ function ResourceMetrics({
           <MetricCompact label="Elapsed"     value={`${sr.total.elapsed}s`} />
           <MetricCompact label="Memory peak" value={`${sr.total.peak_mem.toFixed(0)} MB`} />
           <MetricCompact label="Cost"        value={fmtCost(sr.total.cost)} />
-          {sr.total.tokens_in !== '0' && <MetricCompact label="Tokens" value={`${sr.total.tokens_in} in · ${sr.total.tokens_out} out`} />}
+          {sr.total.tokens_in > 0 && <MetricCompact label="Tokens" value={`${fmtToken(sr.total.tokens_in)} in · ${fmtToken(sr.total.tokens_out)} out`} />}
         </div>
       )}
 
@@ -452,7 +473,7 @@ function ResourceMetrics({
           <MetricCompact label="Elapsed"     value={`${sr.total.elapsed}s`} />
           <MetricCompact label="Memory peak" value={`${sr.total.peak_mem.toFixed(0)} MB`} />
           <MetricCompact label="Cost"        value={fmtCost(sr.total.cost)} />
-          {sr.total.tokens_in !== '0' && <MetricCompact label="Tokens" value={`${sr.total.tokens_in} in · ${sr.total.tokens_out} out`} />}
+          {sr.total.tokens_in > 0 && <MetricCompact label="Tokens" value={`${fmtToken(sr.total.tokens_in)} in · ${fmtToken(sr.total.tokens_out)} out`} />}
         </div>
       )}
     </div>
@@ -526,6 +547,7 @@ export default function App() {
   const [out, setOut] = useState({ open: false, title: '', text: '', status: '' })
   const [suggestions, setSuggestions] = useState<Sug[]>([])
   const [diff, setDiff] = useState('')
+  const [diffFiles, setDiffFiles] = useState<{ path: string; explorer_prefix: string | null }[]>([])
   const [todoItems, setTodoItems] = useState<{ done: boolean; text: string }[]>([])
   const [stdoutLines, setStdoutLines] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
@@ -576,7 +598,7 @@ export default function App() {
       setSel(t)
       setTickets(p => p.map(x => (x.id === id ? t : x)))
       lastUpd.current = t.updated_at
-      setAnswers({}); setDiff(''); setFeedback(''); setTodoItems([]); setStdoutLines([])
+      setAnswers({}); setDiff(''); setDiffFiles([]); setFeedback(''); setTodoItems([]); setStdoutLines([])
       if (poll.current) { poll.current.close(); poll.current = undefined }
       const es = new EventSource(`/api/tickets/${id}/stream`)
       poll.current = es
@@ -754,8 +776,14 @@ export default function App() {
   }
 
   async function viewDiff(id: string) {
-    try { const d = await fetchJSON<{ diff: string }>(`/api/tickets/${id}/diff`); setDiff(d.diff || '(no changes)') }
-    catch { setDiff('Failed to load diff') }
+    try {
+      const d = await fetchJSON<{ diff: string; files?: string[]; explorer_prefix?: string | null }>(`/api/tickets/${id}/diff`)
+      setDiff(d.diff || '(no changes)')
+      setDiffFiles((d.files || []).map(p => ({ path: p, explorer_prefix: d.explorer_prefix || null })))
+    } catch {
+      setDiff('Failed to load diff')
+      setDiffFiles([])
+    }
   }
 
   async function runTest() {
@@ -863,16 +891,7 @@ export default function App() {
             <p className="t-meta font-semibold text-zinc-400 uppercase tracking-wider mb-2">Suggested</p>
             <div className="space-y-2">
               {suggestions.map(sug => (
-                <div key={sug.id} className="bg-white rounded-lg ring-1 ring-zinc-200 px-3.5 py-2.5 flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="t-body font-medium text-zinc-900 truncate">{sug.title}</p>
-                    <p className="t-small text-zinc-500 mt-0.5 clamp-2">{sug.content}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button onClick={() => acceptSuggestion(sug)} className="px-2.5 py-1 rounded text-xs font-medium bg-zinc-900 text-white hover:bg-zinc-700">Accept</button>
-                    <button onClick={() => dismissSuggestion(sug)} className="px-2.5 py-1 rounded text-xs font-medium text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100">Dismiss</button>
-                  </div>
-                </div>
+                <SuggestionCard key={sug.id} sug={sug} onAccept={acceptSuggestion} onDismiss={dismissSuggestion} />
               ))}
             </div>
           </div>
@@ -1118,7 +1137,48 @@ export default function App() {
                       </Section>
                     )}
                     {diff && (
-                      <Section title="Diff">
+                      <Section
+                        title="Diff"
+                        hint={
+                          diffFiles.length > 0
+                            ? `${diffFiles.length} file${diffFiles.length === 1 ? '' : 's'} · click to open in Explorer`
+                            : undefined
+                        }
+                      >
+                        {diffFiles.length > 0 && (() => {
+                          // Explorer (port 18802) serves from os.homedir(); the server
+                          // has already stripped that prefix into explorer_prefix.
+                          const explorerPrefix = diffFiles[0]?.explorer_prefix
+                          const explorerBase = `${window.location.protocol}//${window.location.hostname}:18802/explorer/`
+                          return (
+                            <div className="mb-3 rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100 overflow-hidden">
+                              {explorerPrefix && (
+                                <a
+                                  href={`${explorerBase}${encodeURI(explorerPrefix)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-2 px-3 py-1.5 t-small text-zinc-600 hover:bg-zinc-50"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5 text-zinc-400" />
+                                  Open worktree root in Explorer ↗
+                                </a>
+                              )}
+                              {diffFiles.map(f => (
+                                <a
+                                  key={f.path}
+                                  href={`${explorerBase}${encodeURI((f.explorer_prefix || '') + '/' + f.path)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-2 px-3 py-1.5 t-mono-12 text-zinc-700 hover:bg-zinc-50 group"
+                                  title={`Open ${f.path} in Explorer`}
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5 text-zinc-300 group-hover:text-zinc-500 shrink-0" />
+                                  <span className="truncate">{f.path}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )
+                        })()}
                         <pre className="rounded-md bg-zinc-900 text-zinc-100 p-3.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-80 overflow-y-auto">
 {diff}
                         </pre>

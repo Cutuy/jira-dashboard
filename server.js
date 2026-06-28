@@ -2,6 +2,7 @@ const express = require('express');
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const db = require('./db');
 
@@ -866,17 +867,41 @@ app.delete('/api/tickets/:id', (req, res) => {
 });
 
 // ── Get diff ──────────────────────────────────────────────
+// Returns the raw `git log --stat` text + a flat list of changed
+// file paths (post-image for renames) so the UI can link them to
+// the file explorer (port 18802).
 app.get('/api/tickets/:id/diff', (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (!ticket.worktree_path || !fs.existsSync(ticket.worktree_path)) {
-    return res.json({ diff: '(no worktree available)' });
+    return res.json({ diff: '(no worktree available)', files: [], explorer_prefix: null });
   }
   try {
     const diff = runGit(`log main..HEAD --oneline --stat`, ticket.worktree_path);
-    res.json({ diff: diff || '(no changes)' });
+    let files = [];
+    try {
+      // --name-only gives post-image paths even for renames; --diff-filter=ACMRT
+      // keeps added/copied/renamed/modified but drops pure deletions (Explorer
+      // can't link to a file that no longer exists on disk).
+      const nameOnly = runGit(
+        `diff --name-only --diff-filter=ACMRT main..HEAD`,
+        ticket.worktree_path
+      );
+      files = nameOnly.split('\n').map(s => s.trim()).filter(Boolean);
+    } catch {}
+    // Explorer (port 18802) serves from os.homedir(); strip that prefix so
+    // the frontend can build /explorer/<encoded> URLs without knowing layout.
+    const homeDir = os.homedir();
+    const explorerPrefix = ticket.worktree_path.startsWith(homeDir + '/')
+      ? ticket.worktree_path.slice(homeDir.length + 1)
+      : ticket.worktree_path;
+    res.json({
+      diff: diff || '(no changes)',
+      files,
+      explorer_prefix: explorerPrefix,
+    });
   } catch (err) {
-    res.json({ diff: `Error: ${err.message}` });
+    res.json({ diff: `Error: ${err.message}`, files: [], explorer_prefix: null });
   }
 });
 
