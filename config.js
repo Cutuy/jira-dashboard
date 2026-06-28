@@ -51,7 +51,7 @@ const config = {
   dataDir: path.resolve(ROOT, cfg.data_dir || 'data'),
 
   // Project
-  projectName: cfg.project?.name || 'project',
+  projectName: env('JIRA_PROJECT_NAME') || cfg.project?.name || 'project',
   remoteHost: env('REMOTE_HOST') || cfg.remoteHost || 'example-claw',
   explorerPort: parseInt(env('EXPLORER_PORT')) || cfg.explorerPort || 18802,
   branchDefault: env('GIT_DEFAULT_BRANCH') || cfg.branchDefault || 'main',
@@ -87,7 +87,7 @@ const config = {
   // Test runner
   test: {
     commandOverride: env('JIRA_TEST_CMD') || cfg.test?.command_override || null,
-    timeout: cfg.test?.timeout || 300_000,
+    timeout: parseInt(env('JIRA_TEST_TIMEOUT')) || cfg.test?.timeout || 300_000,
   },
 
   // ── Convenience helpers ──────────────────────────────────

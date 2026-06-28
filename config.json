@@ -2,15 +2,15 @@
   "port": 3006,
   "data_dir": "data",
   "project": {
-    "name": "pyxen",
-    "path": "/home/cutuy/.openclaw/workspace/pyxen"
+    "name": "My Project",
+    "path": "/path/to/your/project"
   },
   "worktrees": {
     "dir": null
   },
   "coder": {
     "type": "opencode",
-    "bin": "/home/cutuy/.opencode/bin/opencode",
+    "bin": "opencode",
     "timeouts": {
       "clarify": 180000,
       "implement": 600000,
