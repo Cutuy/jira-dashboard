@@ -32,8 +32,8 @@ data/store.db-wal
 .DS_Store
 Thumbs.db
 
-# Build artefacts that aren't the deployable UI
-# (public-spa/ IS tracked so a fresh clone works without `npm run build`)
+# Build artifacts
+public-spa/assets/
 public-spa/diagram.html
 public/diagram.html
 
