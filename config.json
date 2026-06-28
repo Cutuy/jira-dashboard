@@ -1,0 +1,30 @@
+{
+  "port": 3006,
+  "data_dir": "data",
+  "project": {
+    "name": "pyxen",
+    "path": "/home/cutuy/.openclaw/workspace/pyxen"
+  },
+  "worktrees": {
+    "dir": null
+  },
+  "coder": {
+    "type": "opencode",
+    "bin": "/home/cutuy/.opencode/bin/opencode",
+    "timeouts": {
+      "clarify": 180000,
+      "implement": 600000,
+      "suggest": 120000,
+      "test": 300000,
+      "command": 30000
+    }
+  },
+  "venv": {
+    "path": ".venv",
+    "pythonpath": "src"
+  },
+  "test": {
+    "command_override": null,
+    "timeout": 300000
+  }
+}

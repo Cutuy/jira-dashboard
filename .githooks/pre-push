@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-push hook — runs unit tests before pushing
+# Fails the push if tests don't pass.
+set -euo pipefail
+
+echo "🔍 Running pre-push checks..."
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+# Run the jira-dashboard unit test suite
+echo "  → Unit tests..."
+FAILED=0
+
+for test_file in tests/*.test.js; do
+  if [ -f "$test_file" ]; then
+    echo "    $(basename "$test_file")"
+    if ! node "$test_file"; then
+      echo "    ❌ FAILED"
+      FAILED=1
+    fi
+  fi
+done
+
+if [ "$FAILED" -eq 1 ]; then
+  echo ""
+  echo "❌ Tests failed. Push aborted."
+  echo "   Fix the failing tests and try again."
+  exit 1
+fi
+
+echo ""
+echo "✅ All checks passed"
+exit 0

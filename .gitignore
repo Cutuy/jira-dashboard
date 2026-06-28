@@ -17,8 +17,10 @@ data/store.db-shm
 data/store.db-wal
 
 # Environment / secrets
-.env
-.env.*
+.env.local
+.env.*.local
+# .env is tracked! It's the canonical local config.
+# Use .env.local for personal overrides.
 !.env.example
 
 # Editor / OS
