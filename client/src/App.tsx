@@ -24,6 +24,8 @@ interface T {
   stage_resources?: SR
 }
 
+type Sug = { id: string; title: string; content: string }
+
 /* ─────────────────────────────────────────────────────────
    Stage vocabulary — single source of truth.
    Order in the board, label, color, accent dot.
@@ -152,8 +154,14 @@ function QuestionCard({
   q: Q; index: number; answer: string; onAnswer: (v: string) => void; disabled: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [otherText, setOtherText] = useState('')
   const long = q.question.length > 110
   const isMC = q.type === 'multiple_choice' && q.options && q.options.length > 0
+  // Was "Other" selected? true when answer is a custom value not in the option list.
+  const OTHER_MARKER = '__other__'
+  const isOther = answer.startsWith(OTHER_MARKER)
+  const otherValue = isOther ? answer.slice(OTHER_MARKER.length) : ''
+
   return (
     <div className="rounded-lg ring-1 ring-zinc-200 bg-white p-3.5">
       <div className="flex gap-3">
@@ -195,7 +203,7 @@ function QuestionCard({
                     name={`q-${q.id}`}
                     value={opt}
                     checked={answer === opt}
-                    onChange={e => onAnswer(e.target.value)}
+                    onChange={e => { setOtherText(''); onAnswer(e.target.value) }}
                     disabled={disabled}
                     className="sr-only"
                   />
@@ -207,6 +215,43 @@ function QuestionCard({
                   {opt}
                 </label>
               ))}
+              {/* "Other" option */}
+              <label
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer transition-colors t-body ${
+                  isOther
+                    ? 'bg-zinc-900 text-white'
+                    : 'hover:bg-zinc-100 text-zinc-700'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`q-${q.id}`}
+                  value={OTHER_MARKER}
+                  checked={isOther}
+                  onChange={e => { setOtherText(''); onAnswer(OTHER_MARKER) }}
+                  disabled={disabled}
+                  className="sr-only"
+                />
+                <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                  isOther ? 'border-white' : 'border-zinc-300'
+                }`}>
+                  {isOther && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                </span>
+                Something else…
+              </label>
+              {isOther && (
+                <div className="pl-7 pt-1">
+                  <input
+                    value={otherValue}
+                    onChange={e => onAnswer(OTHER_MARKER + e.target.value)}
+                    name={`a-${q.id}-other`}
+                    placeholder="Type your answer…"
+                    disabled={disabled}
+                    autoFocus
+                    className="w-full h-8 px-2.5 rounded-md ring-1 ring-zinc-200 focus:ring-2 focus:ring-zinc-900/20 t-small text-zinc-900 placeholder:text-zinc-400 bg-white"
+                  />
+                </div>
+              )}
             </fieldset>
           ) : (
             <input
@@ -276,6 +321,23 @@ function ActivitySidebar({ items }: { items: A[] }) {
    ───────────────────────────────────────────────────────── */
 function fmtNum(v: number) { return v > 1000 ? v.toFixed(0) : v > 10 ? v.toFixed(1) : v.toFixed(2) }
 function fmtCost(c: number) { return c > 0 ? '$' + (c > 1 ? c.toFixed(2) : c.toFixed(4)) : '—' }
+function parseToken(s: string | undefined) {
+  if (!s) return 0
+  s = s.replace(/,/g, '')
+  if (s.endsWith('B')) return parseFloat(s) * 1e9
+  if (s.endsWith('M')) return parseFloat(s) * 1e6
+  if (s.endsWith('K')) return parseFloat(s) * 1e3
+  return parseFloat(s) || 0
+}
+function fmtToken(n: number) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B'
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'
+  return n.toFixed(0)
+}
+function parseCost(s: string | undefined) {
+  return parseFloat((s || '0').replace(/[$,]/g, '')) || 0
+}
 
 function ResourceMetrics({
   activity, stageResources, status,
@@ -285,9 +347,10 @@ function ResourceMetrics({
   const sr = stageResources
   const r = (activity || []).filter(a => a.action === 'resource')
   const hasLive = r.length > 0 && status === 'running'
-  const hasFinished = sr && (sr.clarification || sr.implementation)
+  // Only show finished per-stage breakdowns when NOT running (live mode = clean view)
+  const hasFinished = !hasLive && sr && (sr.clarification || sr.implementation)
   // Backward compat: old tickets have no per-stage tags but have total
-  const hasLegacyTotal = sr && sr.total.cpu > 0 && !hasFinished
+  const hasLegacyTotal = !hasLive && !hasFinished && sr && sr.total.cpu > 0
 
   if (!hasLive && !hasFinished && !hasLegacyTotal) return null
 
@@ -301,6 +364,13 @@ function ResourceMetrics({
   const dt = (el - (parseInt(prev?.elapsed) || 0)) || 3
   const rate = prev ? (cpu - (parseFloat(prev?.cpu) || 0)) / dt : cpu / el
   const cpuPct = Math.min(rate / cores * 100, 100)
+  const peakMem = Math.max(...r.map(e => parseFloat(p(e.detail).mem) || 0), mem)
+  const memPct = Math.min((mem / (peakMem || 1)) * 100, 100)
+  // Baseline (oldest entry) for per-stage delta
+  const base = r.length > 1 ? p(r[r.length - 1].detail) : null
+  const deltaTokensIn = parseToken(cur?.tokens_in) - parseToken(base?.tokens_in)
+  const deltaTokensOut = parseToken(cur?.tokens_out) - parseToken(base?.tokens_out)
+  const deltaCost = parseCost(cur?.cost) - parseCost(base?.cost)
 
   const renderBucket = (label: string, s: S | null) => {
     if (!s || s.cpu === 0) return null
@@ -342,23 +412,35 @@ function ResourceMetrics({
 
       {/* Running metrics (live) shown below per-stage totals */}
       {hasLive && (
-        <div className="rounded-md ring-1 ring-zinc-200 p-3 space-y-1">
+        <div className="space-y-1">
           <h5 className="t-meta text-zinc-500 uppercase tracking-wider">Live</h5>
           <div className="grid grid-cols-2 gap-2">
             <MetricCompact label="CPU rate" value={`${fmtNum(rate)}/${cores} cores`} />
             <MetricCompact label="Memory"   value={`${mem.toFixed(0)} MB`} />
             <MetricCompact label="Threads"  value={cur?.threads || '—'} />
             <MetricCompact label="Elapsed"  value={`${el}s`} />
-            {cur?.tokens_in && <MetricCompact label="Tokens" value={`${cur.tokens_in} in · ${cur.tokens_out} out`} />}
-            {cur?.cost && <MetricCompact label="Cost" value={cur.cost} />}
+            {cur?.tokens_in && <MetricCompact label="Tokens" value={`${fmtToken(deltaTokensIn)} in · ${fmtToken(deltaTokensOut)} out`} />}
+            {cur?.cost && <MetricCompact label="Cost" value={fmtCost(deltaCost)} />}
             {cpuPct !== undefined && (
               <div className="col-span-2">
-                <div className="flex items-baseline justify-between t-meta text-zinc-500 uppercase tracking-wider font-medium">CPU util</div>
+                <div className="flex items-baseline justify-between t-meta text-zinc-500 uppercase tracking-wider font-medium">
+                  <span>CPU util</span>
+                  <span className="t-mono-11 text-zinc-400">{cpuPct.toFixed(0)}%</span>
+                </div>
                 <div className="mt-1 h-1 rounded-full bg-zinc-100 overflow-hidden">
                   <div className="h-full bg-zinc-900" style={{ width: cpuPct + '%' }} />
                 </div>
               </div>
             )}
+            <div className="col-span-2">
+              <div className="flex items-baseline justify-between t-meta text-zinc-500 uppercase tracking-wider font-medium">
+                <span>Memory util</span>
+                <span className="t-mono-11 text-zinc-400">{mem.toFixed(0)} / {peakMem.toFixed(0)} MB</span>
+              </div>
+              <div className="mt-1 h-1 rounded-full bg-zinc-100 overflow-hidden">
+                <div className="h-full bg-zinc-900" style={{ width: memPct + '%' }} />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -414,6 +496,21 @@ function fetchJSON<T = any>(url: string, opts?: RequestInit): Promise<T> {
 }
 
 /* ─────────────────────────────────────────────────────────
+   Browser notifications
+   ───────────────────────────────────────────────────────── */
+let notifyPerm: NotificationPermission | '' = ''
+function ensureNotifyPerm() {
+  if (!('Notification' in window)) return
+  if (Notification.permission === 'granted') { notifyPerm = 'granted'; return }
+  if (Notification.permission === 'denied') return
+  Notification.requestPermission().then(p => { notifyPerm = p })
+}
+function notify(title: string, body: string) {
+  if (notifyPerm !== 'granted' || document.visibilityState === 'visible') return
+  try { new Notification(title, { body, icon: '/favicon.ico' }) } catch {}
+}
+
+/* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
 export default function App() {
@@ -427,9 +524,12 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [out, setOut] = useState({ open: false, title: '', text: '', status: '' })
+  const [suggestions, setSuggestions] = useState<Sug[]>([])
   const [diff, setDiff] = useState('')
+  const [todoItems, setTodoItems] = useState<{ done: boolean; text: string }[]>([])
+  const [stdoutLines, setStdoutLines] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
-  const poll = useRef<ReturnType<typeof setInterval>>()
+  const poll = useRef<EventSource>()
   const lastUpd = useRef('')
 
   const load = useCallback(async () => {
@@ -445,7 +545,7 @@ export default function App() {
   const openRef = useRef(open)
   useEffect(() => { openRef.current = open }, [open])
 
-  useEffect(() => { load(); const i = setInterval(load, 10000); return () => clearInterval(i) }, [load])
+  useEffect(() => { load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i) }, [load])
 
   // Open ticket from URL hash (#ticket/<id>) on mount, and react to hashchange.
   // Mobile / shared-link flow: pasting the URL opens the right ticket.
@@ -457,7 +557,7 @@ export default function App() {
         if (id !== selRef.current?.id) openRef.current(id)
       } else if (selRef.current) {
         setSel(null)
-        if (poll.current) { clearInterval(poll.current); poll.current = undefined }
+        if (poll.current) { poll.current.close(); poll.current = undefined }
       }
     }
     fromHash()
@@ -469,25 +569,67 @@ export default function App() {
     if (sel && location.hash !== '#ticket/' + sel.id) history.replaceState(null, '', '#ticket/' + sel.id)
   }, [sel])
 
-  /* Open ticket — start polling */
+  /* Open ticket — start SSE stream */
   async function open(id: string) {
     try {
       const t: T = await fetchJSON(`/api/tickets/${id}`)
       setSel(t)
       setTickets(p => p.map(x => (x.id === id ? t : x)))
       lastUpd.current = t.updated_at
-      setAnswers({}); setDiff(''); setFeedback('')
-      if (poll.current) clearInterval(poll.current)
-      poll.current = setInterval(async () => {
+      setAnswers({}); setDiff(''); setFeedback(''); setTodoItems([]); setStdoutLines([])
+      if (poll.current) { poll.current.close(); poll.current = undefined }
+      const es = new EventSource(`/api/tickets/${id}/stream`)
+      poll.current = es
+
+      es.addEventListener('resource', (e) => {
         try {
-          const f: T = await fetchJSON(`/api/tickets/${id}`)
-          if (f.updated_at !== lastUpd.current) {
+          const d = JSON.parse(e.data)
+          if (d.detail) {
+            setSel(p => p && p.id === id ? {
+              ...p,
+              activity: [{ id: -Date.now(), ticket_id: id, action: 'resource', detail: d.detail, time: new Date().toISOString(), stage: p.stage }, ...(p.activity || [])]
+            } : p)
+          }
+        } catch {}
+      })
+
+      es.addEventListener('todo', (e) => {
+        try {
+          const d = JSON.parse(e.data)
+          if (d.items) setTodoItems(d.items)
+        } catch {}
+      })
+
+      es.addEventListener('stdout', (e) => {
+        try {
+          const d = JSON.parse(e.data)
+          if (d.text) setStdoutLines(p => [...p.slice(-199), d.text])
+        } catch {}
+      })
+
+      es.addEventListener('ticket', (e) => {
+        try {
+          const f: T = JSON.parse(e.data)
+          if (f.id === id) {
+            const prev = selRef.current
+            // Notify on meaningful transitions
+            if (prev) {
+              if (prev.status === 'running' && f.status === 'idle') {
+                const label = f.stage === 'review' ? 'ready for review' :
+                  f.stage === 'clarification' ? 'questions ready' : 'done'
+                notify(f.title || f.id, `Stage: ${f.stage} — ${label}`)
+              } else if (f.status === 'running' && prev.status !== 'running') {
+                notify(f.title || f.id, `Started: ${f.stage}`)
+              }
+            }
             lastUpd.current = f.updated_at
             setTickets(p => p.map(x => (x.id === id ? f : x)))
             setSel(f)
           }
         } catch {}
-      }, 2000)
+      })
+
+      es.onerror = () => {} // auto-reconnect built into EventSource
     } catch {
       setError('Ticket not found')
     }
@@ -495,8 +637,30 @@ export default function App() {
 
   function close() {
     setSel(null)
-    if (poll.current) { clearInterval(poll.current); poll.current = undefined }
+    if (poll.current) { poll.current.close(); poll.current = undefined }
     if (location.hash.startsWith('#ticket/')) history.replaceState(null, '', ' ')
+  }
+
+  async function loadSuggestions() {
+    try { setSuggestions(await fetchJSON('/api/suggestions')) } catch {}
+  }
+
+  async function acceptSuggestion(sug: Sug) {
+    try {
+      const t = await fetchJSON(`/api/suggestions/${sug.id}/accept`, { method: 'POST' })
+      setSuggestions(p => p.filter(s => s.id !== sug.id))
+      await fetchJSON(`/api/tickets/${t.id}/clarify`, { method: 'POST' })
+      const u = await fetchJSON(`/api/tickets/${t.id}`)
+      setSel(u); setTickets(p => [u, ...p])
+      lastUpd.current = u.updated_at
+    } catch (e: any) { setError(e.message) }
+  }
+
+  async function dismissSuggestion(sug: Sug) {
+    try {
+      await fetchJSON(`/api/suggestions/${sug.id}/dismiss`, { method: 'POST' })
+      setSuggestions(p => p.filter(s => s.id !== sug.id))
+    } catch {}
   }
 
   /* Board actions */
@@ -528,8 +692,9 @@ export default function App() {
     if (!sel) return
     const a: Record<string, string> = {}
     for (const q of sel.questions) {
-      if (answers[q.id]) a[String(q.id)] = answers[q.id]
-      else if (q.answer) a[String(q.id)] = q.answer
+      let v = answers[q.id] || q.answer || ''
+      if (v.startsWith('__other__')) v = v.slice(10)
+      if (v) a[String(q.id)] = v
     }
     if (!Object.keys(a).length) { setError('Answer at least one question'); return }
     setBusy(true)
@@ -555,6 +720,8 @@ export default function App() {
       if (d.ticket) {
         setSel(d.ticket); setTickets(p => p.map(x => (x.id === id ? d.ticket : x)))
         lastUpd.current = d.ticket.updated_at
+      } else if (d.error) {
+        setError(d.error + (d.note ? ' — ' + d.note : ''))
       }
     } catch (e: any) { setError(e.message) }
   }
@@ -690,6 +857,27 @@ export default function App() {
           )}
         </div>
 
+        {/* ── Suggested tickets ── */}
+        {suggestions.length > 0 && (
+          <div className="mb-5 sm:mb-6">
+            <p className="t-meta font-semibold text-zinc-400 uppercase tracking-wider mb-2">Suggested</p>
+            <div className="space-y-2">
+              {suggestions.map(sug => (
+                <div key={sug.id} className="bg-white rounded-lg ring-1 ring-zinc-200 px-3.5 py-2.5 flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="t-body font-medium text-zinc-900 truncate">{sug.title}</p>
+                    <p className="t-small text-zinc-500 mt-0.5 clamp-2">{sug.content}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button onClick={() => acceptSuggestion(sug)} className="px-2.5 py-1 rounded text-xs font-medium bg-zinc-900 text-white hover:bg-zinc-700">Accept</button>
+                    <button onClick={() => dismissSuggestion(sug)} className="px-2.5 py-1 rounded text-xs font-medium text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100">Dismiss</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Board ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
           {STAGES.map(stage => {
@@ -780,6 +968,22 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Clarification — running (generating questions / processing answers) */}
+                {sel.stage === 'clarification' && sel.status === 'running' && (
+                  <Section title="Live status">
+                    <div className="flex items-center gap-2 t-body text-zinc-700 mb-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                      {sel.questions.length > 0 ? 'Processing answers…' : 'Generating questions…'}
+                    </div>
+                    <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
+                    {stdoutLines.length > 0 && (
+                      <div className="mt-3 rounded-md ring-1 ring-zinc-200 bg-zinc-950 text-zinc-300 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
+                        {stdoutLines.map((l, i) => <div key={i}>{l}</div>)}
+                      </div>
+                    )}
+                  </Section>
+                )}
+
                 {/* Clarification — Q&A rounds */}
                 {sel.stage === 'clarification' && sel.questions.length > 0 && (
                   <Section title="Questions" hint={`${sel.questions.length} · round ${Math.max(...sel.questions.map(q => q.round))}`}>
@@ -827,6 +1031,28 @@ export default function App() {
                         <div className="mt-3 rounded-lg ring-1 ring-zinc-200 p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                         </div>
+                        {stdoutLines.length > 0 && (
+                          <div className="mt-3 rounded-md ring-1 ring-zinc-200 bg-zinc-950 text-zinc-300 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
+                            {stdoutLines.map((l, i) => <div key={i}>{l}</div>)}
+                          </div>
+                        )}
+                        {todoItems.length > 0 && (
+                          <div className="mt-3">
+                            <p className="t-meta font-medium text-zinc-500 uppercase tracking-wider mb-1.5">
+                              Progress
+                            </p>
+                            <div className="rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100">
+                              {todoItems.map((item, i) => (
+                                <div key={i} className={`flex items-center gap-2 px-3 py-1.5 t-body ${item.done ? 'text-zinc-400 line-through' : 'text-zinc-700'}`}>
+                                  <span className={`shrink-0 h-3.5 w-3.5 rounded border-2 flex items-center justify-center ${item.done ? 'border-emerald-400 bg-emerald-50' : 'border-zinc-300'}`}>
+                                    {item.done && <span className="h-1.5 w-1.5 rounded-sm bg-emerald-500" />}
+                                  </span>
+                                  {item.text}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {(() => {
                           const f = (sel.activity || []).filter(a => a.action === 'file_changed')
                           if (!f.length) return null
@@ -981,14 +1207,14 @@ export default function App() {
                   </Btn>
                 )}
                 {sel.questions.some(q => !q.answer) && (
-                  <Btn onClick={submit} disabled={busy}>
-                    {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <Btn onClick={submit} disabled={busy || sel.status === 'running'}>
+                    {busy || sel.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                     Submit Answers (partial OK)
                   </Btn>
                 )}
                 {sel.questions.length > 0 && sel.questions.every(q => q.answer) && (
-                  <Btn onClick={submit} disabled={busy}>
-                    {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <Btn onClick={submit} disabled={busy || sel.status === 'running'}>
+                    {busy || sel.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                     Process Answers
                   </Btn>
                 )}

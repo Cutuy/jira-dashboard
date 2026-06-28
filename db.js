@@ -120,6 +120,10 @@ const stmts = {
     SELECT * FROM activity WHERE ticket_id = ? ORDER BY time DESC LIMIT 500
   `),
 
+  clearStageActivity: db.prepare(`
+    DELETE FROM activity WHERE ticket_id = ? AND (action = 'resource' OR action = 'stage_summary') AND stage = ?
+  `),
+
   // Count
   nextQId: db.prepare(`SELECT COALESCE(MAX(id), 0) + 1 AS n FROM questions`),
 };
@@ -215,6 +219,10 @@ function deleteQuestionsForTicket(ticketId) {
   stmts.deleteQuestions.run(ticketId);
 }
 
+function clearStageActivity(ticketId, stage) {
+  stmts.clearStageActivity.run(ticketId, stage);
+}
+
 function addQuestion(ticketId, questionText, answer, round, type, options) {
   const info = stmts.insertQuestion.run(
     ticketId, questionText, answer || null, round || 1,
@@ -288,8 +296,8 @@ function getStageResources(ticketId) {
     const lp = parseKv(last.detail);
     bucket.cpu = Math.max(0, (parseFloat(lp.cpu) || 0) - (parseFloat(fp.cpu) || 0));
     bucket.elapsed = Math.max(0, (parseInt(lp.elapsed) || 0) - (parseInt(fp.elapsed) || 0));
-    bucket.tokens_in = (lp.tokens_in || '').replace(/[,KMB]/g, '');
-    bucket.tokens_out = (lp.tokens_out || '').replace(/[,KMB]/g, '');
+    bucket.tokens_in = parseFloat((lp.tokens_in || '').replace(/[,KMB]/g, '')) || 0;
+    bucket.tokens_out = parseFloat((lp.tokens_out || '').replace(/[,KMB]/g, '')) || 0;
     // cost is $-prefixed in the detail string
     const parseCost = (s) => parseFloat((s || '').replace(/[$,]/g, '')) || 0;
     bucket.cost = Math.max(0, parseCost(lp.cost) - parseCost(fp.cost));
@@ -422,6 +430,7 @@ module.exports = {
   addQuestion,
   updateQuestionAnswer,
   deleteQuestionsForTicket,
+  clearStageActivity,
   logActivity,
   getStageResources,
   nextQuestionId,

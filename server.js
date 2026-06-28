@@ -11,6 +11,18 @@ const OPENCODE_BIN = '/home/cutuy/.opencode/bin/opencode';
 const WORKTREES_DIR = '/home/cutuy/.openclaw/workspace/pyxen/.worktrees';
 const DATA_DIR = path.join(__dirname, 'data');
 
+// ── SSE broadcast registry ────────────────────────────────
+const sseClients = new Map(); // ticketId → Set<res>
+
+function sseBroadcast(ticketId, event, data) {
+  const clients = sseClients.get(ticketId);
+  if (!clients) return;
+  const payload = `event: ${event}\ndata: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`;
+  for (const res of clients) {
+    try { res.write(payload); } catch { clients.delete(res); }
+  }
+}
+
 // ── Stage labels ──────────────────────────────────────────
 const STAGE_LABELS = {
   clarification: 'Clarification',
@@ -23,6 +35,23 @@ const STAGE_LABELS = {
 // ── Helpers ───────────────────────────────────────────────
 function uid() {
   return crypto.randomBytes(6).toString('hex');
+}
+
+function slugFromTitle(title) {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 40)
+    .replace(/-$/, '');
+}
+
+function ticketId(title) {
+  const slug = slugFromTitle(title);
+  const suffix = crypto.randomBytes(3).toString('hex');
+  return slug ? `${slug}-${suffix}` : suffix;
 }
 
 // ── OpenCode runner ───────────────────────────────────────
@@ -61,8 +90,11 @@ function getOpencodeTokens() {
   } catch { return { cost: 0, input: '0', output: '0' }; }
 }
 
-function runOpenCode(ticketId, prompt, onProgress, stage = null) {
+function runOpenCode(ticketId, prompt, onProgress, stage = null, timeout = 180_000) {
   return new Promise((resolve, reject) => {
+    const ticket = db.getTicket(ticketId);
+    const existingSession = ticket && ticket.ocode_session;
+
     const venvBin = path.join(PYXEN_DIR, '.venv', 'bin');
     const pyxenEnv = loadPyxenEnv();
     const env = {
@@ -72,10 +104,17 @@ function runOpenCode(ticketId, prompt, onProgress, stage = null) {
       PATH: `${venvBin}:${process.env.PATH}`,
       VIRTUAL_ENV: path.join(PYXEN_DIR, '.venv'),
     };
-    const proc = spawn(OPENCODE_BIN, ['run', prompt], {
+    const args = ['run'];
+    if (existingSession) {
+      args.push('-s', existingSession);
+    } else {
+      args.push('--title', `ticket-${ticketId}`);
+    }
+    args.push(prompt);
+    const proc = spawn(OPENCODE_BIN, args, {
       cwd: PYXEN_DIR,
       env,
-      timeout: 600_000,
+      timeout,
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -108,7 +147,8 @@ function runOpenCode(ticketId, prompt, onProgress, stage = null) {
         const rss = parseInt(fields[21]) || 0;
         const threads = parseInt(fields[17]) || 1;
         const cpuSec = (baseCpu + (utime + stime) / clkTck).toFixed(1);
-        const memMB = (rss * 4096 / (1024 * 1024)).toFixed(1);
+        const memMB = rss * 4096 / (1024 * 1024);
+        const memStr = memMB.toFixed(1);
         if (memMB > peakMem) peakMem = memMB;
         const elapsed = baseElapsed + Math.round((Date.now() - startTime) / 1000);
 
@@ -122,7 +162,7 @@ function runOpenCode(ticketId, prompt, onProgress, stage = null) {
         let tokensStr = '';
         if (tokensIn) tokensStr = ` tokens_in=${tokensIn} tokens_out=${tokensOut} cost=$${runCost}`;
 
-        const resStr = `cpu=${cpuSec}s mem=${memMB}MB threads=${threads} elapsed=${elapsed}s ncores=${ncores}${tokensStr}`;
+        const resStr = `cpu=${cpuSec}s mem=${memStr}MB threads=${threads} elapsed=${elapsed}s ncores=${ncores}${tokensStr}`;
         // Tag resource entries with stage for per-stage breakdown
         db.logActivity(ticketId, 'resource', resStr, stage);
         if (onProgress) onProgress(`[resource] ${resStr}`);
@@ -144,23 +184,42 @@ function runOpenCode(ticketId, prompt, onProgress, stage = null) {
     proc.on('close', code => {
       clearInterval(resMonitor);
 
-      // Compute per-stage delta summary
-      const tokensAfter = getOpencodeTokens();
-      let deltaCpu = '0', deltaElapsed = '0', deltaPeakMem = peakMem.toFixed(0);
-      let deltaCost = Math.max(0, tokensAfter.cost - tokensBefore.cost).toFixed(3);
+      // Compute per-stage delta summary (best-effort, must not crash the server)
       try {
-        const t = db.getTicket(ticketId);
-        if (t) {
-          const resEntries = (t.activity || []).filter(a => a.action === 'resource' && a.stage === stage);
-          if (resEntries.length > 0) {
-            const latest = Object.fromEntries(resEntries[0].detail.split(' ').map(k => k.split('=')));
-            deltaCpu = Math.max(0, (parseFloat(latest.cpu) || 0) - baseCpu).toFixed(1);
-            deltaElapsed = String(Math.max(0, (parseInt(latest.elapsed) || 0) - baseElapsed));
+        const tokensAfter = getOpencodeTokens();
+        let deltaCpu = '0', deltaElapsed = '0', deltaPeakMem = Number(peakMem).toFixed(0);
+        let deltaCost = Math.max(0, tokensAfter.cost - tokensBefore.cost).toFixed(3);
+        try {
+          const t = db.getTicket(ticketId);
+          if (t) {
+            const resEntries = (t.activity || []).filter(a => a.action === 'resource' && a.stage === stage);
+            if (resEntries.length > 0) {
+              const latest = Object.fromEntries(resEntries[0].detail.split(' ').map(k => k.split('=')));
+              deltaCpu = Math.max(0, (parseFloat(latest.cpu) || 0) - baseCpu).toFixed(1);
+              deltaElapsed = String(Math.max(0, (parseInt(latest.elapsed) || 0) - baseElapsed));
+            }
           }
-        }
-      } catch {}
-      const summaryStr = `cpu=${deltaCpu}s elapsed=${deltaElapsed}s peak_mem=${deltaPeakMem}MB tokens_in=${tokensAfter.input} tokens_out=${tokensAfter.output} cost=$${deltaCost}`;
-      db.logActivity(ticketId, 'stage_summary', summaryStr, stage);
+        } catch {}
+        const summaryStr = `cpu=${deltaCpu}s elapsed=${deltaElapsed}s peak_mem=${deltaPeakMem}MB tokens_in=${tokensAfter.input} tokens_out=${tokensAfter.output} cost=$${deltaCost}`;
+        db.logActivity(ticketId, 'stage_summary', summaryStr, stage);
+      } catch {} // resource summary is optional — never crash the server
+
+      // After first run, capture session ID by title (deterministic, no log parsing)
+      if (!existingSession) {
+        try {
+          const list = execSync(`${OPENCODE_BIN} session list`, { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
+          const title = `ticket-${ticketId}`;
+          for (const line of list.split('\n')) {
+            if (line.includes(title)) {
+              const sid = line.trim().split(/\s+/)[0];
+              if (sid.startsWith('ses_')) {
+                db.updateTicketField(ticketId, 'ocode_session', sid);
+                break;
+              }
+            }
+          }
+        } catch {}
+      }
 
       if (!killed) {
         if (code === 0) {
@@ -169,8 +228,12 @@ function runOpenCode(ticketId, prompt, onProgress, stage = null) {
           } else {
             resolve(stdout.trim());
           }
+        } else if (stdout.trim()) {
+          // Non-zero exit but we have output — resolve what we got
+          resolve(stdout.trim());
         } else {
-          reject(new Error(`OpenCode exited ${code}: ${stderr.slice(-500)}`));
+          const reason = code === null ? 'killed (signal/timeout)' : `exited ${code}`;
+          reject(new Error(`OpenCode ${reason}: ${stderr.slice(-500)}`));
         }
       }
     });
@@ -219,12 +282,50 @@ app.get('/api/tickets/:id', (req, res) => {
   res.json({ ...t, stage_resources: stageResources });
 });
 
+// ── SSE stream ────────────────────────────────────────────
+app.get('/api/tickets/:id/stream', (req, res) => {
+  const ticketId = req.params.id;
+  const t = db.getTicket(ticketId);
+  if (!t) return res.status(404).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx
+  res.flushHeaders();
+
+  // Register for direct resource pushes from opencode
+  if (!sseClients.has(ticketId)) sseClients.set(ticketId, new Set());
+  sseClients.get(ticketId).add(res);
+
+  // Lightweight poll for non-resource changes (activity, status, stage)
+  let lastUpd = t.updated_at || '';
+  const poll = setInterval(() => {
+    try {
+      const t2 = db.getTicket(ticketId);
+      if (!t2) { clearInterval(poll); res.end(); return; }
+      if (t2.updated_at !== lastUpd || t2.status === 'running') {
+        lastUpd = t2.updated_at;
+        const sr = db.getStageResources(ticketId);
+        const payload = { ...t2, stage_resources: sr };
+        res.write(`event: ticket\ndata: ${JSON.stringify(payload)}\n\n`);
+      }
+    } catch {}
+  }, 2000);
+
+  req.on('close', () => {
+    clearInterval(poll);
+    const clients = sseClients.get(ticketId);
+    if (clients) { clients.delete(res); if (clients.size === 0) sseClients.delete(ticketId); }
+  });
+});
+
 // ── Create ticket ─────────────────────────────────────────
 app.post('/api/tickets', (req, res) => {
   const { title, content } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
 
-  const id = uid();
+  const id = ticketId(title);
   const now = new Date().toISOString();
   const ticket = db.createTicket({
     id, title: title.trim(), content: (content || '').trim(),
@@ -238,50 +339,49 @@ app.post('/api/tickets/:id/clarify', async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'clarification') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
 
   let extraContext = '';
   if (ticket.review_feedback) {
     extraContext = `\n\nReview feedback from previous implementation:\n${ticket.review_feedback}`;
   }
 
-  const prompt = `A ticket has been filed for the pyxen project at ${PYXEN_DIR}.
+  const prompt = `You are in the CLARIFICATION stage of a ticketing system.
 
-Title: ${ticket.title}
-Content: ${ticket.content}${extraContext}
+A user filed a ticket for the pyxen project at ${PYXEN_DIR}. Your job is to ask
+clarifying questions so the user can provide the missing details. After the user
+answers, a follow-up call will decide whether to proceed to implementation or
+ask more questions.
 
-Your job:
-1. Ask clarifying questions about what exactly needs to be done. Ask as many as you genuinely need — no fixed minimum or maximum.
-2. For each question, decide the best answer format:
-   - free_text: the user types a free-form answer in a textbox
-   - multiple_choice: the user picks one option from a predefined list (2-5 options)
-3. Format your response as a JSON object:
+Ticket title: ${ticket.title}
+Ticket description: ${ticket.content}${extraContext}
+
+Ask 3-5 questions. For each question pick a format:
+  - "free_text"  — user types a free-form answer
+  - "multiple_choice" — user picks from a list (provide 2-5 options)
+
+Output ONLY valid JSON — no markdown, no explanation, no code fences:
 
 {
   "questions": [
-    {
-      "question": "What approach should we use?",
-      "type": "multiple_choice",
-      "options": ["Approach A", "Approach B", "Approach C"]
-    },
-    {
-      "question": "Any additional details?",
-      "type": "free_text"
-    }
+    { "question": "Which database should we use?", "type": "multiple_choice", "options": ["SQLite", "Postgres", "BigQuery"] },
+    { "question": "Any additional constraints?", "type": "free_text" }
   ],
-  "notes": "Optional context notes"
-}
-
-Rules:
-- Each question object MUST have "question" and "type" fields.
-- For "multiple_choice", include an "options" array with 2-5 strings.
-- For "free_text", do NOT include an "options" field.
-
-IMPORTANT: Output ONLY the JSON object, no other text.`;
+  "notes": "Optional: why these questions matter"
+}`;
 
   try {
+    db.clearStageActivity(ticket.id, 'clarification');
     db.logActivity(ticket.id, 'clarify_start');
     db.updateTicketField(ticket.id, 'status', 'running');
-    const output = await runOpenCode(ticket.id, prompt, undefined, 'clarification');
+    const onProgress = (line) => {
+      if (line.startsWith('[resource] ')) {
+        sseBroadcast(ticket.id, 'resource', { detail: line.slice(11) });
+      } else {
+        sseBroadcast(ticket.id, 'stdout', { text: line });
+      }
+    };
+    const output = await runOpenCode(ticket.id, prompt, onProgress, 'clarification');
     db.updateTicketField(ticket.id, 'status', 'idle');
 
     let parsed;
@@ -322,6 +422,7 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'clarification') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
 
   const { answers } = req.body;
   if (!answers || Object.keys(answers).length === 0) {
@@ -347,46 +448,49 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
     extraContext = `\n\nPrevious review feedback: ${updatedTicket.review_feedback}`;
   }
 
-  const prompt = `You are helping plan work on the pyxen codebase at ${PYXEN_DIR}.
+  const prompt = `You are in the ANSWER EVALUATION stage. The user has answered the
+clarification questions below. Your job: decide whether to proceed to
+implementation or ask follow-up questions.
 
 Ticket: ${updatedTicket.title}
 Content: ${updatedTicket.content}${extraContext}
 
-Clarification Q&A so far:
+Q&A:
 ${qaText}
 
-Your job:
-1. Evaluate if you have enough information to create an implementation plan
-2. If you NEED MORE CLARIFICATION, respond with JSON:
+Output ONLY valid JSON — no markdown, no explanation, no code fences:
+
+If you NEED more info:
 {
   "need_more": true,
   "questions": [
-    {
-      "question": "Follow-up question?",
-      "type": "free_text"
-    },
-    {
-      "question": "Another question?",
-      "type": "multiple_choice",
-      "options": ["Option A", "Option B"]
-    }
+    { "question": "Follow-up?", "type": "free_text" },
+    { "question": "Which approach?", "type": "multiple_choice", "options": ["A", "B"] }
   ],
-  "notes": "Why I need more info"
+  "notes": "Why more info is needed"
 }
-3. If you HAVE ENOUGH INFO, respond with JSON: {"need_more": false, "plan": "Detailed high-level implementation plan here...", "files_to_modify": ["file1.py", "file2.py"], "estimated_complexity": "low|medium|high", "notes": "Any assumptions made"}
 
-Rules for questions:
-- Each question object MUST have "question" and "type" fields.
-- For "multiple_choice", include an "options" array with 2-5 strings.
-- For "free_text", do NOT include an "options" field.
-- Ask as many questions as genuinely needed.
-
-IMPORTANT: Output ONLY the JSON object, no other text.`;
+If you have ENOUGH info:
+{
+  "need_more": false,
+  "plan": "High-level plan (1-3 sentences)",
+  "files_to_modify": ["file1.py", "file2.py"],
+  "estimated_complexity": "low|medium|high",
+  "notes": "Any assumptions"
+}`;
 
   try {
+    db.clearStageActivity(ticket.id, 'clarification');
     db.logActivity(ticket.id, 'answer_process');
     db.updateTicketField(ticket.id, 'status', 'running');
-    const output = await runOpenCode(ticket.id, prompt, undefined, 'clarification');
+    const onProgress = (line) => {
+      if (line.startsWith('[resource] ')) {
+        sseBroadcast(ticket.id, 'resource', { detail: line.slice(11) });
+      } else {
+        sseBroadcast(ticket.id, 'stdout', { text: line });
+      }
+    };
+    const output = await runOpenCode(ticket.id, prompt, onProgress, 'clarification');
     db.updateTicketField(ticket.id, 'status', 'idle');
 
     let parsed;
@@ -436,6 +540,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'implementation' && ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
 
   // If coming from review (continue), move back to implementation
   if (ticket.stage === 'review') {
@@ -498,6 +603,7 @@ Your job:
 
 Work in: ${worktreePath}`;
 
+    db.clearStageActivity(ticket.id, 'implementation');
     db.logActivity(ticket.id, 'implement_start');
     db.updateTicketField(ticket.id, 'status', 'running');
 
@@ -520,7 +626,23 @@ Work in: ${worktreePath}`;
       } catch { /* best-effort */ }
     }, 2000);
 
-    const output = await runOpenCode(ticket.id, prompt, undefined, 'implementation');
+    let _todo = { items: [], fresh: true };
+    const onProgress = (line) => {
+      if (line.startsWith('[resource] ')) {
+        sseBroadcast(ticket.id, 'resource', { detail: line.slice(11) });
+      } else {
+        const m = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.+)/);
+        if (m) {
+          if (_todo.fresh) { _todo = { items: [], fresh: false }; }
+          _todo.items.push({ done: m[1] !== ' ', text: m[2].trim() });
+          sseBroadcast(ticket.id, 'todo', { items: _todo.items.map(i => ({ done: i.done, text: i.text })) });
+        } else if (line.trim()) {
+          _todo.fresh = true;
+          sseBroadcast(ticket.id, 'stdout', { text: line });
+        }
+      }
+    };
+    const output = await runOpenCode(ticket.id, prompt, onProgress, 'implementation', 600_000);
 
     // Store token usage delta
     const tokensAfter = getOpencodeTokens();
@@ -695,17 +817,16 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     db.logActivity(ticket.id, 'committed', commitSha);
 
     // Rebase onto main before cherry-pick to reduce conflict surface
+    // Run in the worktree (branch is locked there — can't checkout from main repo)
     try {
-      runGit(`checkout ${ticket.branch_name}`);
-      runGit(`rebase main`);
+      runGit(`rebase main`, ticket.worktree_path);
+      commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path); // rebase rewrites SHA
       runGit(`checkout main`);
     } catch (err) {
       db.logActivity(ticket.id, 'rebase_failed', err.message);
-      try { runGit(`rebase --abort`); } catch {}
-      runGit(`checkout main`).catch(() => {});
-      // Rebase failed — still try the cherry-pick (some bases are
-      // already in main), but if it also fails the outer catch
-      // will hold the worktree intact.
+      try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+      try { runGit(`checkout main`); } catch {}
+      // Rebase failed — still try the cherry-pick with original commitSha
     }
 
     runGit(`cherry-pick ${commitSha}`);
@@ -771,7 +892,12 @@ app.post('/api/test', (req, res) => {
   const venvBin = path.join(PYXEN_DIR, '.venv', 'bin');
   const python = fs.existsSync(path.join(venvBin, 'python')) ? path.join(venvBin, 'python') : 'python3';
   const out = fs.createWriteStream(outFile);
-  const proc = spawn(python, ['-m', 'pyxen.test'], { cwd: PYXEN_DIR, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(python, ['-m', 'pyxen.test'], {
+    cwd: PYXEN_DIR,
+    env: { ...process.env, PYTHONPATH: path.join(PYXEN_DIR, 'src') },
+    timeout: 120_000,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
   proc.stdout.pipe(out);
   proc.stderr.pipe(out);
   proc.on('close', code => { runResults[runId].status = code === 0 ? 'pass' : 'fail'; });
@@ -797,11 +923,80 @@ app.post('/api/prepush', (req, res) => {
   res.json({ runId });
 
   const out = fs.createWriteStream(outFile);
-  const proc = spawn('bash', [hookPath], { cwd: PYXEN_DIR, timeout: 300_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn('bash', [hookPath], {
+    cwd: PYXEN_DIR,
+    env: { ...process.env, PYTHONPATH: path.join(PYXEN_DIR, 'src') },
+    timeout: 300_000,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
   proc.stdout.pipe(out);
   proc.stderr.pipe(out);
   proc.on('close', code => { runResults[runId].status = code === 0 ? 'pass' : 'fail'; });
   proc.on('error', err => { fs.appendFileSync(outFile, '\nError: ' + err.message); runResults[runId].status = 'fail'; });
+});
+
+// ── Suggested tickets ──────────────────────────────────────
+let suggestions = [];
+const SUGGESTIONS_MAX = 5;
+
+async function generateSuggestions() {
+  try {
+    const visionPath = path.join(PYXEN_DIR, 'docs', 'vision.md');
+    const vision = fs.existsSync(visionPath) ? fs.readFileSync(visionPath, 'utf-8') : '';
+
+    const prompt = `You are suggesting feature tickets for the pyxen project.
+
+Project: ${PYXEN_DIR}
+
+Project vision (${visionPath}):
+${vision}
+
+Suggest ${SUGGESTIONS_MAX} tickets. Each must advance the vision above — new primitives, new provider backends, extension ideas, integration with existing tools, or improvements that reduce environment coupling. NO bug fixes, NO cleanup tickets, NO refactors.
+
+Output ONLY valid JSON — no markdown, no explanation:
+{
+  "tickets": [
+    {"title": "Feature title (<10 words)", "content": "What to build and why it advances the vision (one sentence)"}
+  ]
+}`;
+    const output = await runOpenCode('_suggestions', prompt, undefined, null, 120_000);
+    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (parsed && Array.isArray(parsed.tickets)) {
+      suggestions = parsed.tickets.map(t => ({
+        id: 'sug-' + crypto.randomBytes(4).toString('hex'),
+        title: t.title,
+        content: t.content
+      }));
+      console.log(`Generated ${suggestions.length} ticket suggestions`);
+    }
+  } catch (e) {
+    console.log('Suggestion generation failed:', e.message);
+  }
+}
+
+app.get('/api/suggestions', (req, res) => {
+  res.json(suggestions);
+});
+
+app.post('/api/suggestions/:id/accept', (req, res) => {
+  const sug = suggestions.find(s => s.id === req.params.id);
+  if (!sug) return res.status(404).json({ error: 'Not found' });
+  const id = ticketId(sug.title);
+  const now = new Date().toISOString();
+  const ticket = db.createTicket({
+    id, title: sug.title.trim(), content: (sug.content || '').trim(),
+    created_at: now, updated_at: now
+  });
+  suggestions = suggestions.filter(s => s.id !== req.params.id);
+  if (suggestions.length < 2) generateSuggestions();
+  res.status(201).json(ticket);
+});
+
+app.post('/api/suggestions/:id/dismiss', (req, res) => {
+  suggestions = suggestions.filter(s => s.id !== req.params.id);
+  if (suggestions.length < 2) generateSuggestions();
+  res.json({ ok: true });
 });
 
 // ── Start ──────────────────────────────────────────────────
@@ -835,4 +1030,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   Pyxen: ${PYXEN_DIR}`);
   console.log(`   OpenCode: ${OPENCODE_BIN}`);
   console.log(`   Data: SQLite at data/store.db`);
+  if (suggestions.length < SUGGESTIONS_MAX) generateSuggestions();
 });
