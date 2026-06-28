@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { timeAgo } from './lib/utils'
+
+const ACTIVITY_MAX_VISIBLE = 24
+const FILES_MODIFIED_MAX_VISIBLE = 12
 import {
   Loader2, Link as LinkIcon, ExternalLink, Play, Shield,
   RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check
@@ -306,7 +309,7 @@ function ActivitySidebar({ items }: { items: A[] }) {
         </span>
       </h4>
       <ol className="space-y-1.5">
-        {items.slice(0, 24).map((a, i) => (
+        {items.slice(0, ACTIVITY_MAX_VISIBLE).map((a, i) => (
           <li key={i}>
             <button
               onClick={() => setExpanded(s => ({ ...s, [i]: !s[i] }))}
@@ -655,6 +658,8 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
+interface ClientConfig { projectName: string; remoteHost: string; explorerPort: number }
+
 export default function App() {
   const [tickets, setTickets] = useState<T[]>([])
   const [title, setTitle] = useState('')
@@ -667,6 +672,7 @@ export default function App() {
   const [feedback, setFeedback] = useState('')
   const [out, setOut] = useState({ open: false, title: '', text: '', status: '' })
   const [suggestions, setSuggestions] = useState<Sug[]>([])
+  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorerPort: 18802 })
   const [diff, setDiff] = useState('')
   const [diffFiles, setDiffFiles] = useState<{ path: string; explorer_prefix: string | null }[]>([])
   const [todoItems, setTodoItems] = useState<{ done: boolean; text: string }[]>([])
@@ -690,7 +696,7 @@ export default function App() {
   const openRef = useRef(open)
   useEffect(() => { openRef.current = open }, [open])
 
-  useEffect(() => { load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i) }, [load])
+  useEffect(() => { fetchJSON<ClientConfig>('/api/config').then(setCfg).catch(() => {}); load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i) }, [load])
 
   // Open ticket from URL hash (#ticket/<id>) on mount, and react to hashchange.
   // Mobile / shared-link flow: pasting the URL opens the right ticket.
@@ -1000,7 +1006,7 @@ export default function App() {
       <header className="sticky top-0 z-30 bg-white/85 backdrop-blur border-b border-zinc-200">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-12 flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2 min-w-0">
-            <h1 className="t-h-page text-zinc-900 shrink-0">Pyxen Board</h1>
+            <h1 className="t-h-page text-zinc-900 shrink-0">{cfg.projectName}</h1>
             <span className="t-small text-zinc-500 hidden sm:inline truncate">Project tickets</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1282,7 +1288,7 @@ export default function App() {
                                 Files modified · {f.length}
                               </p>
                               <div className="rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100">
-                                {f.slice(0, 12).map((a, i) => (
+                                {f.slice(0, FILES_MODIFIED_MAX_VISIBLE).map((a, i) => (
                                   <p key={i} className="t-mono-12 text-zinc-700 px-3 py-1.5">
                                     {a.detail}
                                   </p>
@@ -1316,7 +1322,7 @@ export default function App() {
                         </dl>
                         <div className="mt-3 flex gap-2 flex-wrap">
                           <a
-                            href={`vscode://vscode-remote/ssh-remote+cutuy-claw${sel.worktree_path}`}
+                            href={`vscode://vscode-remote/ssh-remote+${cfg.remoteHost}${sel.worktree_path}`}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-zinc-200 hover:bg-zinc-50 t-small text-zinc-700"
@@ -1324,7 +1330,7 @@ export default function App() {
                             <ExternalLink className="h-3.5 w-3.5" /> Open in VSCode
                           </a>
                           <a
-                            href={`cursor://ssh-remote+cutuy-claw${sel.worktree_path}`}
+                            href={`cursor://ssh-remote+${cfg.remoteHost}${sel.worktree_path}`}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-zinc-200 hover:bg-zinc-50 t-small text-zinc-700"
@@ -1350,7 +1356,7 @@ export default function App() {
                           // Explorer (port 18802) serves from os.homedir(); the server
                           // has already stripped that prefix into explorer_prefix.
                           const explorerPrefix = diffFiles[0]?.explorer_prefix
-                          const explorerBase = `${window.location.protocol}//${window.location.hostname}:18802/explorer/`
+                          const explorerBase = `${window.location.protocol}//${window.location.hostname}:${cfg.explorerPort}/explorer/`
                           return (
                             <div className="mb-3 rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100 overflow-hidden">
                               {explorerPrefix && (

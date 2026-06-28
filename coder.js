@@ -5,6 +5,7 @@
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const config = require('./config');
 
 // ── opencode backend ───────────────────────────────────────
@@ -175,7 +176,8 @@ function run(prompt, opts = {}) {
 // ── Resource monitor (CPU, mem, tokens) ────────────────────
 function startResourceMonitor(pid, onProgress) {
   const clkTck = 100;
-  const ncores = parseInt(fs.readFileSync('/proc/cpuinfo', 'utf-8').match(/processor/g)?.length) || 4;
+  const ncores = os.cpus().length;
+  const PAGE_SIZE = 4096;
   let peakMem = 0;
   const startTime = Date.now();
 
@@ -189,7 +191,7 @@ function startResourceMonitor(pid, onProgress) {
       const rss = parseInt(fields[21]) || 0;
       const threads = parseInt(fields[17]) || 1;
       const cpuSec = ((utime + stime) / clkTck).toFixed(1);
-      const memMB = rss * 4096 / (1024 * 1024);
+      const memMB = rss * PAGE_SIZE / (1024 * 1024);
       const memStr = memMB.toFixed(1);
       if (memMB > peakMem) peakMem = memMB;
       const elapsed = Math.round((Date.now() - startTime) / 1000);

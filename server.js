@@ -13,6 +13,10 @@ const db = require('./db');
 const PORT = config.port;
 const DATA_DIR = config.dataDir;
 
+// ── Run prefixes ──────────────────────────────────────────
+const PREPUSH_RUN_PREFIX = 'prepush-';
+const TEST_RUN_PREFIX = 'test-';
+
 // ── Ticket-context file plumbing ───────────────────────────
 // Heavy per-ticket state (Q&A, plan, review feedback, last test failure
 // tail, vision doc, etc.) is written to a markdown file in the project
@@ -361,6 +365,15 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public-spa', 'index.html'));
 });
 
+// ── Client config ─────────────────────────────────────────
+app.get('/api/config', (req, res) => {
+  res.json({
+    projectName: config.projectName,
+    remoteHost: config.remoteHost,
+    explorerPort: config.explorerPort,
+  });
+});
+
 // ── List all tickets ──────────────────────────────────────
 app.get('/api/tickets', (req, res) => {
   const tickets = db.getAllTickets();
@@ -611,12 +624,12 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       fs.rmSync(worktreePath, { recursive: true, force: true });
       try { runGit(`branch -D ${branchName}`); } catch {}
       runGit(`checkout -b ${branchName}`);
-      runGit(`checkout main`);
+      runGit(`checkout ${config.branchDefault}`);
       runGit(`worktree add ${worktreePath} ${branchName}`);
     } else {
       try { runGit(`branch -D ${branchName}`); } catch {}
       runGit(`checkout -b ${branchName}`);
-      runGit(`checkout main`);
+      runGit(`checkout ${config.branchDefault}`);
       runGit(`worktree add ${worktreePath} ${branchName}`);
     }
 
@@ -705,7 +718,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
 
     let diffSummary = '';
     try {
-      diffSummary = runGit(`log main..HEAD --stat`, worktreePath);
+      diffSummary = runGit(`log ${config.branchDefault}..HEAD --stat`, worktreePath);
     } catch {}
     if (!diffSummary) {
       try { diffSummary = runGit(`diff --stat HEAD`, worktreePath); } catch { diffSummary = '(no diff)'; }
@@ -814,13 +827,13 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     try { runGit(`diff --cached --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
     if (!hasChanges) {
       try {
-        const ahead = parseInt(runGit(`rev-list --count main..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
+        const ahead = parseInt(runGit(`rev-list --count ${config.branchDefault}..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
         if (ahead > 0) hasChanges = true;
       } catch {}
     }
 
     if (!hasChanges) {
-      const msg = 'No uncommitted changes and no commits ahead of main on this branch.';
+      const msg = `No uncommitted changes and no commits ahead of ${config.branchDefault} on this branch.`;
       db.logActivity(ticket.id, 'no_changes', msg);
       return res.status(409).json({ error: msg, ticket: db.getTicket(ticket.id) });
     }
@@ -829,7 +842,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     runGit(`add -A`, ticket.worktree_path);
 
     try {
-      const mergeBase = runGit(`merge-base main ${ticket.branch_name}`);
+      const mergeBase = runGit(`merge-base ${config.branchDefault} ${ticket.branch_name}`);
       runGit(`reset --soft ${mergeBase}`, ticket.worktree_path);
       db.logActivity(ticket.id, 'squashed', `All commits squashed to merge-base ${mergeBase.slice(0, 7)}`);
     } catch {
@@ -841,13 +854,13 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     db.logActivity(ticket.id, 'committed', commitSha);
 
     try {
-      runGit(`rebase main`, ticket.worktree_path);
+      runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
       commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-      runGit(`checkout main`);
+      runGit(`checkout ${config.branchDefault}`);
     } catch (err) {
       db.logActivity(ticket.id, 'rebase_failed', err.message);
       try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
-      try { runGit(`checkout main`); } catch {}
+      try { runGit(`checkout ${config.branchDefault}`); } catch {}
     }
 
     runGit(`cherry-pick ${commitSha}`);
@@ -890,10 +903,10 @@ app.get('/api/tickets/:id/diff', (req, res) => {
     return res.json({ diff: '(no worktree available)', files: [], explorer_prefix: null });
   }
   try {
-    const diff = runGit(`log main..HEAD --oneline --stat`, ticket.worktree_path);
+    const diff = runGit(`log ${config.branchDefault}..HEAD --oneline --stat`, ticket.worktree_path);
     let files = [];
     try {
-      const nameOnly = runGit(`diff --name-only --diff-filter=ACMRT main..HEAD`, ticket.worktree_path);
+      const nameOnly = runGit(`diff --name-only --diff-filter=ACMRT ${config.branchDefault}..HEAD`, ticket.worktree_path);
       files = nameOnly.split('\n').map(s => s.trim()).filter(Boolean);
     } catch {}
     const homeDir = os.homedir();
@@ -926,7 +939,7 @@ app.post('/api/tickets/:id/tests/run', (req, res) => {
 const runResults = {};
 
 app.post('/api/test', (req, res) => {
-  const runId = 'test-' + Date.now();
+  const runId = `${TEST_RUN_PREFIX}${Date.now()}`;
   const outFile = path.join(DATA_DIR, runId + '.log');
   runResults[runId] = { status: 'running', file: outFile };
   res.json({ runId });
@@ -959,7 +972,7 @@ app.post('/api/prepush', (req, res) => {
   const hookPath = path.join(__dirname, '.githooks', 'pre-push');
   if (!fs.existsSync(hookPath)) return res.status(400).json({ error: 'Pre-push hook not found' });
 
-  const runId = 'prepush-' + Date.now();
+  const runId = `${PREPUSH_RUN_PREFIX}${Date.now()}`;
   const outFile = path.join(DATA_DIR, runId + '.log');
   runResults[runId] = { status: 'running', file: outFile };
   res.json({ runId });
@@ -968,7 +981,7 @@ app.post('/api/prepush', (req, res) => {
   const proc = spawn('bash', [hookPath], {
     cwd: config.projectDir,
     env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
-    timeout: 300_000,
+    timeout: config.test.timeout,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.pipe(out);
@@ -980,13 +993,15 @@ app.post('/api/prepush', (req, res) => {
 // ── Suggested tickets ──────────────────────────────────────
 let suggestions = [];
 const SUGGESTIONS_MAX = 5;
+const SUGGESTIONS_TICKET_ID = '_suggestions';
+const SUGGESTION_ID_PREFIX = 'sug-';
 
 async function generateSuggestions() {
   try {
     const visionPath = path.join(config.projectDir, 'docs', 'vision.md');
     const vision = fs.existsSync(visionPath) ? fs.readFileSync(visionPath, 'utf-8') : '';
 
-    const sugDir = path.join(config.ticketContextDir('_suggestions'));
+    const sugDir = path.join(config.ticketContextDir(SUGGESTIONS_TICKET_ID));
     fs.mkdirSync(sugDir, { recursive: true });
     const contextFile = path.join(sugDir, 'context.md');
     fs.writeFileSync(contextFile,
@@ -996,12 +1011,12 @@ async function generateSuggestions() {
     );
 
     const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nRead vision + project root at: ${contextFile}`;
-    const output = await runCoder('_suggestions', fullPrompt, { timeout: config.coder.timeouts.suggest });
+    const output = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest });
     const jsonMatch = output.match(/\{[\s\S]*\}/);
     const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     if (parsed && Array.isArray(parsed.tickets)) {
       suggestions = parsed.tickets.map(t => ({
-        id: 'sug-' + crypto.randomBytes(4).toString('hex'),
+        id: SUGGESTION_ID_PREFIX + crypto.randomBytes(4).toString('hex'),
         title: t.title,
         content: t.content,
       }));

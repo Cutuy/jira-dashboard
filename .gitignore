@@ -36,3 +36,6 @@ Thumbs.db
 # (public-spa/ IS tracked so a fresh clone works without `npm run build`)
 public-spa/diagram.html
 public/diagram.html
+
+.env
+opencode.json

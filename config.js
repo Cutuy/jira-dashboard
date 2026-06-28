@@ -52,6 +52,10 @@ const config = {
 
   // Project
   projectName: cfg.project?.name || 'project',
+  remoteHost: env('REMOTE_HOST') || cfg.remoteHost || 'example-claw',
+  explorerPort: parseInt(env('EXPLORER_PORT')) || cfg.explorerPort || 18802,
+  branchDefault: env('GIT_DEFAULT_BRANCH') || cfg.branchDefault || 'main',
+  dbBusyTimeout: parseInt(env('DB_BUSY_TIMEOUT')) || cfg.dbBusyTimeout || 5000,
   projectDir: env('JIRA_PROJECT_DIR') || cfg.project?.path || process.cwd(),
 
   // Worktrees (defaults to <projectDir>/.worktrees if not set)
