@@ -658,7 +658,7 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
-interface ClientConfig { projectName: string; remoteHost: string; explorerPort: number }
+interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string } }
 
 export default function App() {
   const [tickets, setTickets] = useState<T[]>([])
@@ -672,9 +672,10 @@ export default function App() {
   const [feedback, setFeedback] = useState('')
   const [out, setOut] = useState({ open: false, title: '', text: '', status: '' })
   const [suggestions, setSuggestions] = useState<Sug[]>([])
-  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorerPort: 18802 })
+  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' } })
   const [diff, setDiff] = useState('')
   const [diffFiles, setDiffFiles] = useState<{ path: string; explorer_prefix: string | null }[]>([])
+  const [diffCommitSha, setDiffCommitSha] = useState('')
   const [todoItems, setTodoItems] = useState<{ done: boolean; text: string }[]>([])
   const [stdoutLines, setStdoutLines] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
@@ -926,9 +927,10 @@ export default function App() {
 
   async function viewDiff(id: string) {
     try {
-      const d = await fetchJSON<{ diff: string; files?: string[]; explorer_prefix?: string | null }>(`/api/tickets/${id}/diff`)
+      const d = await fetchJSON<{ diff: string; files?: string[]; explorer_prefix?: string | null; commitSha?: string }>(`/api/tickets/${id}/diff`)
       setDiff(d.diff || '(no changes)')
       setDiffFiles((d.files || []).map(p => ({ path: p, explorer_prefix: d.explorer_prefix || null })))
+      setDiffCommitSha(d.commitSha || '')
     } catch {
       setDiff('Failed to load diff')
       setDiffFiles([])
@@ -1353,15 +1355,22 @@ export default function App() {
                         }
                       >
                         {diffFiles.length > 0 && (() => {
-                          // Explorer (port 18802) serves from os.homedir(); the server
-                          // has already stripped that prefix into explorer_prefix.
                           const explorerPrefix = diffFiles[0]?.explorer_prefix
-                          const explorerBase = `${window.location.protocol}//${window.location.hostname}:${cfg.explorerPort}/explorer/`
+                          function explorerUrl(path: string) {
+                            return cfg.explorer.url
+                              .replace(/\{protocol\}/g, window.location.protocol)
+                              .replace(/\{host\}/g, window.location.hostname)
+                              .replace(/\{sha\}/g, diffCommitSha)
+                              .replace(/\{path\}/g, encodeURI(path))
+                              .replace(/\{prefix\}/g, encodeURI(explorerPrefix || ''))
+                              .replace(/\{owner\}/g, encodeURI(cfg.explorer.owner))
+                              .replace(/\{repo\}/g, encodeURI(cfg.explorer.repo))
+                          }
                           return (
                             <div className="mb-3 rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100 overflow-hidden">
                               {explorerPrefix && (
                                 <a
-                                  href={`${explorerBase}${encodeURI(explorerPrefix)}`}
+                                  href={explorerUrl('')}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="flex items-center gap-2 px-3 py-1.5 t-small text-zinc-600 hover:bg-zinc-50"
@@ -1373,7 +1382,7 @@ export default function App() {
                               {diffFiles.map(f => (
                                 <a
                                   key={f.path}
-                                  href={`${explorerBase}${encodeURI((f.explorer_prefix || '') + '/' + f.path)}`}
+                                  href={explorerUrl(f.path)}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="flex items-center gap-2 px-3 py-1.5 t-mono-12 text-zinc-700 hover:bg-zinc-50 group"

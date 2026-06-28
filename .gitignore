@@ -32,6 +32,9 @@ data/store.db-wal
 .DS_Store
 Thumbs.db
 
+# Per-instance data directories
+data-3007/
+
 # Build artifacts
 public-spa/assets/
 public-spa/diagram.html

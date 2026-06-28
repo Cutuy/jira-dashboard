@@ -53,7 +53,11 @@ const config = {
   // Project
   projectName: env('JIRA_PROJECT_NAME') || cfg.project?.name || 'project',
   remoteHost: env('REMOTE_HOST') || cfg.remoteHost || 'example-claw',
-  explorerPort: parseInt(env('EXPLORER_PORT')) || cfg.explorerPort || 18802,
+  explorer: {
+    url: env('EXPLORER_URL') || cfg.explorer?.url || 'https://github.com/{owner}/{repo}/blob/{sha}/{path}',
+    owner: env('GITHUB_OWNER') || cfg.explorer?.owner || '',
+    repo: env('GITHUB_REPO') || cfg.explorer?.repo || '',
+  },
   branchDefault: env('GIT_DEFAULT_BRANCH') || cfg.branchDefault || 'main',
   dbBusyTimeout: parseInt(env('DB_BUSY_TIMEOUT')) || cfg.dbBusyTimeout || 5000,
   projectDir: env('JIRA_PROJECT_DIR') || cfg.project?.path || process.cwd(),

@@ -5,7 +5,7 @@
 | What | How |
 |---|---|
 | **VSCode/Cursor URIs** (`cutuy-claw` → `REMOTE_HOST`) | `config.js` + `.env` |
-| **Explorer port** (`18802` → `EXPLORER_PORT`) | `config.js` + `.env` |
+| **Explorer port** → URL template (`EXPLORER_URL`) | `config.js` explorer.url template with `{sha}` `{path}` `{protocol}` `{host}` `{owner}` `{repo}` |
 | **Page title** (`Pyxen Board` → `JIRA_PROJECT_NAME`) | `config.js` + `config.json` + `/api/config` endpoint |
 | **db.js `dataDir`** hardcoded path | `db.js` imports `config.dataDir` |
 | **Prepush timeout** `300_000` bypass | `server.js` uses `config.test.timeout` |

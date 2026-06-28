@@ -370,7 +370,7 @@ app.get('/api/config', (req, res) => {
   res.json({
     projectName: config.projectName,
     remoteHost: config.remoteHost,
-    explorerPort: config.explorerPort,
+    explorer: config.explorer,
   });
 });
 
@@ -913,7 +913,7 @@ app.get('/api/tickets/:id/diff', (req, res) => {
     const explorerPrefix = ticket.worktree_path.startsWith(homeDir + '/')
       ? ticket.worktree_path.slice(homeDir.length + 1)
       : ticket.worktree_path;
-    res.json({ diff: diff || '(no changes)', files, explorer_prefix: explorerPrefix });
+    res.json({ diff: diff || '(no changes)', files, explorer_prefix: explorerPrefix, commitSha: ticket.commit_sha });
   } catch (err) {
     res.json({ diff: `Error: ${err.message}`, files: [], explorer_prefix: null });
   }

@@ -104,7 +104,8 @@ withoutEnv(() => {
 (function testNewFieldDefaults() {
   const cfg = reloadConfig();
   assert.strictEqual(cfg.remoteHost, 'example-claw', 'remoteHost should default to example-claw');
-  assert.strictEqual(cfg.explorerPort, 18802, 'explorerPort should default to 18802');
+  assert.ok(cfg.explorer && typeof cfg.explorer.url === 'string', 'explorer.url should be a string');
+  assert.ok(cfg.explorer.url.includes('{sha}'), 'explorer.url should be a template with {sha}');
   assert.strictEqual(cfg.branchDefault, 'main', 'branchDefault should default to main');
   assert.strictEqual(cfg.dbBusyTimeout, 5000, 'dbBusyTimeout should default to 5000');
   assert.strictEqual(cfg.projectName, 'My Project', 'projectName should come from config.json');
@@ -118,7 +119,9 @@ withoutEnv(() => {
 (function testEnvVarOverrides() {
   withEnv([
     'REMOTE_HOST=my-host',
-    'EXPLORER_PORT=3000',
+    'EXPLORER_URL={protocol}//{host}:3000/explorer/{prefix}/{path}',
+    'GITHUB_OWNER=my-org',
+    'GITHUB_REPO=my-repo',
     'GIT_DEFAULT_BRANCH=develop',
     'DB_BUSY_TIMEOUT=9999',
     'JIRA_PROJECT_NAME=EnvProject',
@@ -127,7 +130,9 @@ withoutEnv(() => {
   ].join('\n'), () => {
     const cfg = reloadConfig();
     assert.strictEqual(cfg.remoteHost, 'my-host', 'remoteHost should be overridden by .env');
-    assert.strictEqual(cfg.explorerPort, 3000, 'explorerPort should be overridden by .env');
+    assert.strictEqual(cfg.explorer.url, '{protocol}//{host}:3000/explorer/{prefix}/{path}', 'explorer.url should be overridden by .env');
+    assert.strictEqual(cfg.explorer.owner, 'my-org', 'explorer.owner should be overridden by .env');
+    assert.strictEqual(cfg.explorer.repo, 'my-repo', 'explorer.repo should be overridden by .env');
     assert.strictEqual(cfg.branchDefault, 'develop', 'branchDefault should be overridden by .env');
     assert.strictEqual(cfg.dbBusyTimeout, 9999, 'dbBusyTimeout should be overridden by .env');
     assert.strictEqual(cfg.projectName, 'EnvProject', 'projectName should be overridden by .env');
@@ -141,11 +146,13 @@ withoutEnv(() => {
 (function testConfigJsonOverrides() {
   withoutEnv(() => {
     withConfigJson(
-      orig => ({ ...orig, remoteHost: 'json-host', explorerPort: 7777, branchDefault: 'staging', dbBusyTimeout: 1234 }),
+      orig => ({ ...orig, remoteHost: 'json-host', explorer: { url: 'https://github.com/json-org/json-repo/blob/{sha}/{path}', owner: 'json-org', repo: 'json-repo' }, branchDefault: 'staging', dbBusyTimeout: 1234 }),
       () => {
         const cfg = reloadConfig();
         assert.strictEqual(cfg.remoteHost, 'json-host', 'remoteHost should be overridable via config.json');
-        assert.strictEqual(cfg.explorerPort, 7777, 'explorerPort should be overridable via config.json');
+        assert.strictEqual(cfg.explorer.url, 'https://github.com/json-org/json-repo/blob/{sha}/{path}', 'explorer.url should be overridable via config.json');
+        assert.strictEqual(cfg.explorer.owner, 'json-org', 'explorer.owner should be overridable via config.json');
+        assert.strictEqual(cfg.explorer.repo, 'json-repo', 'explorer.repo should be overridable via config.json');
         assert.strictEqual(cfg.branchDefault, 'staging', 'branchDefault should be overridable via config.json');
         assert.strictEqual(cfg.dbBusyTimeout, 1234, 'dbBusyTimeout should be overridable via config.json');
         console.log('PASS: new fields can be set via config.json');
@@ -157,11 +164,12 @@ withoutEnv(() => {
 // ── .env wins over config.json when both define the same key ──
 (function testEnvWinsOverConfigJson() {
   withConfigJson(
-    orig => ({ ...orig, remoteHost: 'from-json' }),
+    orig => ({ ...orig, remoteHost: 'from-json', explorer: { url: 'from-json', owner: 'json', repo: 'repo' } }),
     () => {
-      withEnv('REMOTE_HOST=from-env', () => {
+      withEnv('REMOTE_HOST=from-env\nEXPLORER_URL=from-env-url', () => {
         const cfg = reloadConfig();
         assert.strictEqual(cfg.remoteHost, 'from-env', '.env should take precedence over config.json');
+        assert.strictEqual(cfg.explorer.url, 'from-env-url', 'explorer.url should prefer .env over config.json');
         console.log('PASS: .env overrides config.json when both define the same field');
       });
     }
