@@ -14,17 +14,5 @@ them, and you review the diff, run tests, and close — all locally, no cloud de
 
 ## Guiding Principles
 
-**Token-aware** — every prompt sent to the AI is trimmed to essential context.
-The ticket-context file pattern keeps LLM KV caches warm across tool calls.
-
-**Fail visible** — errors stream to the UI in real time. A crashed coder call
-doesn't hide behind a generic "something went wrong".
-
-**No hidden state** — the SQLite database is the single source of truth.
-Migrations are explicit, and old JSON backups can rebuild it from scratch.
-
-**Editor agnostic** — VSCode and Cursor URIs are configurable. The dashboard
-just links to your editor; it doesn't mandate one.
-
-**User owns their data** — the SQLite database lives in your project directory.
-No telemetry, no external services, no data leaves your machine.
+- Token-aware, fail-visible, no hidden state
+- Editor-agnostic, user owns their data, no telemetry
