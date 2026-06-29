@@ -988,9 +988,24 @@ export default function App() {
   }
 
   function copyUrl(id: string) {
-    navigator.clipboard.writeText(location.origin + location.pathname + '#ticket/' + id)
-      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) })
-      .catch(() => {})
+    const url = location.origin + location.pathname + '#ticket/' + id
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200) }
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(done).catch(() => {
+        // Fallback for non-HTTPS
+        const ta = document.createElement('textarea')
+        ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.select()
+        document.execCommand('copy'); document.body.removeChild(ta)
+        done()
+      })
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta); ta.select()
+      document.execCommand('copy'); document.body.removeChild(ta)
+      done()
+    }
   }
 
   /* Group tickets by stage once */
