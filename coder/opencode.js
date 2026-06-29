@@ -38,6 +38,14 @@ module.exports = function opencodeBackend(config, store) {
       };
     },
 
+    formatProgress(line) {
+      try {
+        const evt = JSON.parse(line);
+        if (evt.type === 'text' && evt.part?.type === 'text') return evt.part.text;
+      } catch {}
+      return null;
+    },
+
     parseOutput(stdout) {
       try {
         const lines = stdout.trim().split('\n');

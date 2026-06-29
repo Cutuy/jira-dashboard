@@ -21,6 +21,14 @@ module.exports = function codexBackend(config, store) {
       };
     },
 
+    formatProgress(line) {
+      try {
+        const evt = JSON.parse(line);
+        if (evt.type === 'item.completed' && evt.item?.type === 'agent_message') return evt.item.text || '';
+      } catch {}
+      return null;
+    },
+
     parseOutput(stdout) {
       try {
         const lines = stdout.trim().split('\n');

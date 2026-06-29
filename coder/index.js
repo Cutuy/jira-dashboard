@@ -62,7 +62,10 @@ function run(prompt, opts = {}) {
       const chunk = d.toString();
       stdout += chunk;
       if (onProgress) {
-        chunk.split('\n').filter(l => l.trim()).forEach(l => onProgress(l));
+        chunk.split('\n').filter(l => l.trim()).forEach(l => {
+          const formatted = backend.formatProgress ? backend.formatProgress(l) : null;
+          onProgress(formatted !== null ? formatted : l);
+        });
       }
     });
     proc.stderr.on('data', d => { stderr += d.toString(); });

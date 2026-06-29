@@ -21,6 +21,8 @@ module.exports = function claudeBackend(config, store) {
       };
     },
 
+    formatProgress(line) { return null; },
+
     parseOutput(stdout) {
       try {
         const data = JSON.parse(stdout);
