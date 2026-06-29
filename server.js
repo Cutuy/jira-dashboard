@@ -468,7 +468,9 @@ app.post('/api/tickets/:id/clarify', async (req, res) => {
     db.updateTicketField(ticket.id, 'status', 'running');
     const onProgress = (line) => {
       if (line.startsWith('[resource] ')) {
-        sseBroadcast(ticket.id, 'resource', { detail: line.slice(11) });
+        const detail = line.slice(11);
+        db.logActivity(ticket.id, 'resource', detail, 'clarification');
+        sseBroadcast(ticket.id, 'resource', { detail });
       } else {
         sseBroadcast(ticket.id, 'stdout', { text: line });
       }
@@ -544,7 +546,9 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
     db.updateTicketField(ticket.id, 'status', 'running');
     const onProgress = (line) => {
       if (line.startsWith('[resource] ')) {
-        sseBroadcast(ticket.id, 'resource', { detail: line.slice(11) });
+        const detail = line.slice(11);
+        db.logActivity(ticket.id, 'resource', detail, 'clarification');
+        sseBroadcast(ticket.id, 'resource', { detail });
       } else {
         sseBroadcast(ticket.id, 'stdout', { text: line });
       }
@@ -681,7 +685,9 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
     let _todo = { items: [], fresh: true };
     const onProgress = (line) => {
       if (line.startsWith('[resource] ')) {
-        sseBroadcast(ticket.id, 'resource', { detail: line.slice(11) });
+        const detail = line.slice(11);
+        db.logActivity(ticket.id, 'resource', detail, 'implementation');
+        sseBroadcast(ticket.id, 'resource', { detail });
       } else {
         const m = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.+)/);
         if (m) {
