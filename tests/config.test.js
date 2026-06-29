@@ -107,8 +107,9 @@ withoutEnv(() => {
   assert.ok(cfg.explorer && typeof cfg.explorer.url === 'string', 'explorer.url should be a string');
   assert.ok(cfg.explorer.url.includes('{sha}'), 'explorer.url should be a template with {sha}');
   assert.strictEqual(cfg.branchDefault, 'main', 'branchDefault should default to main');
-  assert.strictEqual(cfg.dbBusyTimeout, 5000, 'dbBusyTimeout should default to 5000');
-  assert.strictEqual(cfg.projectName, 'My Project', 'projectName should come from config.json');
+    assert.strictEqual(cfg.dbBusyTimeout, 5000, 'dbBusyTimeout should default to 5000');
+    assert.strictEqual(cfg.mergeStrategy, 'cherry-pick', 'mergeStrategy should default to cherry-pick');
+    assert.strictEqual(cfg.projectName, 'My Project', 'projectName should come from config.json');
   assert.strictEqual(cfg.projectDir, '/path/to/your/project', 'projectDir should come from config.json');
   console.log('PASS: new config fields have correct defaults');
 })();
@@ -123,6 +124,7 @@ withoutEnv(() => {
     'GITHUB_OWNER=my-org',
     'GITHUB_REPO=my-repo',
     'GIT_DEFAULT_BRANCH=develop',
+    'MERGE_STRATEGY=pr',
     'DB_BUSY_TIMEOUT=9999',
     'JIRA_PROJECT_NAME=EnvProject',
     'JIRA_PROJECT_DIR=/env/path',
@@ -134,6 +136,7 @@ withoutEnv(() => {
     assert.strictEqual(cfg.explorer.owner, 'my-org', 'explorer.owner should be overridden by .env');
     assert.strictEqual(cfg.explorer.repo, 'my-repo', 'explorer.repo should be overridden by .env');
     assert.strictEqual(cfg.branchDefault, 'develop', 'branchDefault should be overridden by .env');
+    assert.strictEqual(cfg.mergeStrategy, 'pr', 'mergeStrategy should be overridden by .env');
     assert.strictEqual(cfg.dbBusyTimeout, 9999, 'dbBusyTimeout should be overridden by .env');
     assert.strictEqual(cfg.projectName, 'EnvProject', 'projectName should be overridden by .env');
     assert.strictEqual(cfg.projectDir, '/env/path', 'projectDir should be overridden by .env');

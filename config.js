@@ -88,6 +88,9 @@ const config = {
     pythonpath: env('JIRA_PYTHONPATH') || cfg.venv?.pythonpath || 'src',
   },
 
+  // Close / merge strategy
+  mergeStrategy: env('MERGE_STRATEGY') || cfg.mergeStrategy || 'cherry-pick',
+
   // Test runner
   test: {
     commandOverride: env('JIRA_TEST_CMD') || cfg.test?.command_override || null,

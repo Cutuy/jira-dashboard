@@ -853,23 +853,44 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
     db.logActivity(ticket.id, 'committed', commitSha);
 
-    try {
-      runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
-      commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-      runGit(`checkout ${config.branchDefault}`);
-    } catch (err) {
-      db.logActivity(ticket.id, 'rebase_failed', err.message);
-      try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
-      try { runGit(`checkout ${config.branchDefault}`); } catch {}
+    let prUrl = null;
+    if (config.mergeStrategy === 'pr') {
+      runGit(`push origin ${ticket.branch_name}`, ticket.worktree_path);
+      db.logActivity(ticket.id, 'branch_pushed', `Pushed ${ticket.branch_name} to origin`);
+
+      try {
+        const prOutput = require('child_process').execSync(
+          `gh pr create --title "${ticket.id}: ${ticket.title}" --body ""`,
+          { cwd: ticket.worktree_path, encoding: 'utf-8', timeout: config.coder.timeouts.command }
+        ).trim();
+        prUrl = prOutput;
+        db.logActivity(ticket.id, 'pr_created', prUrl);
+      } catch {
+        const remoteUrl = runGit(`config --get remote.origin.url`, ticket.worktree_path);
+        const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
+        const prLink = `https://github.com/${repoPath}/pull/new/${ticket.branch_name}`;
+        prUrl = prLink;
+        db.logActivity(ticket.id, 'pr_link', prLink);
+      }
+    } else {
+      try {
+        runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
+        commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+        runGit(`checkout ${config.branchDefault}`);
+      } catch (err) {
+        db.logActivity(ticket.id, 'rebase_failed', err.message);
+        try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+        try { runGit(`checkout ${config.branchDefault}`); } catch {}
+      }
+
+      runGit(`cherry-pick ${commitSha}`);
+      db.logActivity(ticket.id, 'cherry_picked', commitSha);
     }
 
-    runGit(`cherry-pick ${commitSha}`);
-    db.logActivity(ticket.id, 'cherry_picked', commitSha);
-
     db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
-    cleanupWorktreeAfterSuccess(ticket.id);
+    if (config.mergeStrategy !== 'pr') cleanupWorktreeAfterSuccess(ticket.id);
 
-    res.json({ success: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
+    res.json({ success: true, commit_sha: commitSha, pr_url: prUrl, ticket: db.getTicket(ticket.id) });
   } catch (err) {
     const tail = commitSha
       ? ` Squashed commit ${commitSha.slice(0, 7)} is still on branch ${ticket.branch_name} in the worktree.`

@@ -12,6 +12,7 @@
 | **Resource monitor** `/proc/cpuinfo` parsing | `coder.js` uses `os.cpus().length` |
 | **SQLite busy timeout** `5000` | `config.dbBusyTimeout` (env `DB_BUSY_TIMEOUT`) |
 | **Default branch** `'main'` in 11 git commands | `config.branchDefault` (env `GIT_DEFAULT_BRANCH`) |
+| **Merge strategy** — cherry-pick vs push+PR | `config.mergeStrategy` (env `MERGE_STRATEGY`) — `cherry-pick` or `pr` |
 | **Run ID prefixes** (`test-`, `prepush-`, `sug-`, `_suggestions`) | Module-level constants in `server.js` |
 | **Activity/files limits** (`24`, `12`) | Module-level constants in `App.tsx` |
 | **Config.json** — machine-specific paths removed | Generic example, actual values in `.env` |
