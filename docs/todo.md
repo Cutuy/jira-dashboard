@@ -36,6 +36,8 @@ Tested: local + opencode + linux only.
 
 ## Features
 
+- Selfhost — use jira-dashboard to develop jira-dashboard itself.
+- Adopt pyxen for deployment config management.
 - Tighten coder runtime env — launch coder CLI from the worktree dir so each ticket session runs in its own sandbox.
 - Reuse worktrees for tickets in large repos (instead of creating new worktree each time).
 - Custom GitHub instance URL support (for self-hosted GitHub Enterprise).
