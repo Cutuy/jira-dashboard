@@ -1,42 +1,52 @@
-# Status
+# Todo
 
-## ✅ Done
+## Done
 
-| What | How |
-|---|---|
-| Config fields generalized (remote host, ports, timeouts, branch, etc.) | `config.js` + `.env` env var overrides |
-| Explorer port → URL template (`EXPLORER_URL`) | Template with `{sha}` `{path}` `{protocol}` `{host}` `{owner}` `{repo}` |
-| `db.js` dataDir from config | Uses `config.dataDir` |
-| Resource monitor uses `os.cpus().length` | No more `/proc/cpuinfo` parsing |
-| SQLite busy timeout configurable | `DB_BUSY_TIMEOUT` |
-| `'main'` → `config.branchDefault` | All 11 git commands use config |
-| Merge strategy: cherry-pick or push+PR | `MERGE_STRATEGY=pr` pushes branch + `gh pr create` |
-| Magic strings → named constants | `_suggestions`, `sug-`, `prepush-`, `test-`, activity/files limits |
-| `config.json` is a generic example | Machine-specific values in `.env` |
-| `public-spa/assets/` untracked | Vite build artifacts gitignored |
-| Tests for config layer | Defaults, env override, config.json override, precedence |
-| `.env.example` self-documenting | Inline comments for every var |
-| `config.schema.json` | JSON Schema with descriptions + defaults |
-| `$schema` ref in `config.json` | IDE intellisense for JSON editing |
-| `docs/vision.md` filled | Project vision for suggestion generator |
-| `docs/todo.md` | This file |
-| README rewritten | New-user journey: clone → configure → start → use |
+- Config fields generalized (remote host, ports, timeouts, branch, etc.)
+- Explorer port replaced with URL template (`EXPLORER_URL`)
+- `db.js` dataDir from config
+- Resource monitor uses `os.cpus().length`
+- SQLite busy timeout configurable
+- `main` -> `config.branchDefault` across all git commands
+- Merge strategy: cherry-pick or push+PR (`MERGE_STRATEGY`)
+- Magic strings extracted to named constants
+- `config.json` is a generic example, machine values in `.env`
+- `public-spa/assets/` untracked + gitignored
+- Config layer tests (defaults, env override, json override, precedence)
+- `install/templates/env.template` with inline docs for every var
+- `config.schema.json` + `$schema` ref for IDE intellisense
+- README with new-user journey
+- diff file list sourced from `git log --name-only` (ahead of main only)
+- Install script with interactive prompts, foreground/background mode
 
-## 🔲 Still Open
+## Bugs
 
-| Priority | Gap | Impact |
-|---|---|---|
-| 🔴 | **Test runner is Python-only** (`python -m project.test`) | Broken for JS/Go/Rust projects |
-| 🔴 | **Client UI hardcodes `"main"`** (App.tsx:918,1438) | Wrong if default branch is `master`/`develop` |
-| 🔴 | **Linux-only resource monitor** (`/proc/pid/stat`, page size, clk_tck) | Silently wrong on macOS/Windows |
-| 🟡 | **VSCode/Cursor URI schemes only** | Other editors get dead links |
-| 🟡 | **Python venv assumptions** (`VIRTUAL_ENV`, `PATH` prepend) | Irrelevant noise for non-Python projects |
-| 🟡 | **opencode is the only real coder backend** | Need backends for claude code, codex, etc. |
-| 🟡 | **Linux-only auto-start** (systemd) | Need macOS launchd plist, Windows schtasks |
-| 🟡 | **No first-run experience** | Empty DB, no config validation — silent failures |
-| 🟡 | **No Docker / containerized setup** | Native module needs C++ build tools |
-| 🟢 | **`better-sqlite3` native module version lock** | Must match Node.js exactly |
-| 🟢 | **`.githooks/pre-push` doesn't exist** | Pre-push API returns 400 |
-| 🟢 | **Branch naming `feature/<slug>` hardcoded** | Can't customize prefix |
-| 🟢 | **Suggestions empty if no project `docs/vision.md`** | No warning shown |
-| 🟢 | **Default `projectDir` = `process.cwd()`** | Falls back to dashboard dir itself |
+- Theme toggle "auto" doesn't follow system preference. Manual dark/light work.
+- Copy link (in ticket) doesn't work in some browsers.
+
+## Portability
+
+- Test runner is Python-only (`python -m project.test`). Broken for JS/Go/Rust.
+- Client UI hardcodes `"main"` in user-facing strings (App.tsx:918,1438).
+- Resource monitor is Linux-only (`/proc/pid/stat`, page size, clk_tck).
+- VSCode/Cursor URI schemes only. Other editors get dead links.
+- Python venv assumptions (`VIRTUAL_ENV`, `PATH` prepend) irrelevant for non-Python projects.
+- `better-sqlite3` native module version must match Node.js exactly.
+- No first-run experience: empty DB, no config validation, silent failures.
+
+## Coder Backends
+
+- Only opencode is implemented. Need backends for claude code, codex, Amazon Q, etc.
+
+## Platform Support
+
+- Only Linux systemd for auto-start. Need macOS launchd plist, Windows schtasks.
+- No Docker / containerized setup (native module needs C++ build tools).
+
+## Features
+
+- Reuse worktrees for tickets in large repos (instead of creating new worktree each time).
+- Custom GitHub instance URL support (for self-hosted GitHub Enterprise).
+- Branch naming prefix configurable (currently hardcoded to `feature/`).
+- Suggestions display warning when project has no `docs/vision.md`.
+- Default `projectDir` should not fall back to `process.cwd()`.
