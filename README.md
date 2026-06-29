@@ -19,11 +19,11 @@ Opens http://localhost:3006.
 
 ## Configuration
 
-| Where | What | Tracked |
-|---|---|---|
-| `<project>/.jira-dashboard/.env` | Dashboard settings (port, project name, coder bin) | No (`.gitignore` has `*`) |
-| `<project>/.env` | Environment for the coder subprocess (API keys, venv) | Usually not |
-| `config.json` | Structural defaults (timeouts) | Yes |
+| Where | What |
+|---|---|
+| `<project>/.jira-dashboard/.env` | Dashboard settings (port, project name, coder bin) |
+| `<project>/.env` | Environment for the coder subprocess (API keys, venv) |
+| `config.json` | Structural defaults (timeouts) |
 
 ## Workflow
 

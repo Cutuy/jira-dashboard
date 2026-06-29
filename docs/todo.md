@@ -15,6 +15,10 @@
 - `better-sqlite3` native module version must match Node.js exactly.
 - No first-run experience: empty DB, no config validation, silent failures.
 
+## Testing
+
+- Testing methodology: CI cadence, unit vs integration vs E2E, test fixtures strategy, snapshot testing for frontend, git integration testing.
+
 ## Coder Backends
 
 - Only opencode is implemented. Need backends for claude code, codex, Amazon Q, etc.
