@@ -1,24 +1,5 @@
 # Todo
 
-## Done
-
-- Config fields generalized (remote host, ports, timeouts, branch, etc.)
-- Explorer port replaced with URL template (`EXPLORER_URL`)
-- `db.js` dataDir from config
-- Resource monitor uses `os.cpus().length`
-- SQLite busy timeout configurable
-- `main` -> `config.branchDefault` across all git commands
-- Merge strategy: cherry-pick or push+PR (`MERGE_STRATEGY`)
-- Magic strings extracted to named constants
-- `config.json` is a generic example, machine values in `.env`
-- `public-spa/assets/` untracked + gitignored
-- Config layer tests (defaults, env override, json override, precedence)
-- `install/templates/env.template` with inline docs for every var
-- `config.schema.json` + `$schema` ref for IDE intellisense
-- README with new-user journey
-- diff file list sourced from `git log --name-only` (ahead of main only)
-- Install script with interactive prompts, foreground/background mode
-
 ## Bugs
 
 - Theme toggle "auto" doesn't follow system preference. Manual dark/light work.
