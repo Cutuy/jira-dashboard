@@ -1,86 +1,96 @@
 # Jira Dashboard
 
-A Jira-like ticket dashboard for managing AI-assisted development workflows.
+A lightweight ticket dashboard for AI-assisted development. Define tickets, let an AI
+coder clarify and implement them, review the diff, run tests, and close — all from a
+single-page app. No database servers, no cloud accounts.
 
 ## Quick Start
 
 ```bash
-# 1. Configure
+git clone <this-repo>
+cd jira-dashboard
+
+# 1. Point at YOUR project and your AI coder
 cp .env.example .env
-# Edit .env — set JIRA_PROJECT_DIR to your project path
-# Edit config.json — set project.name to your project name
+# Edit .env — at minimum set:
+#   JIRA_PROJECT_DIR=/path/to/your/repo
+#   JIRA_CODER_BIN=/path/to/your/coder-cli
 
-# 2. Install
+# 2. Optionally tell the dashboard about your project
+#    Edit config.json → project.name = "My Project"
+
+# 3. Install & build
 npm install
-
-# 3. Run tests
-npm test
+cd client && npm install && npm run build && cd ..
 
 # 4. Start
 npm start
 ```
 
-## Configuration
+Open http://localhost:3006. You'll see an empty board. Click **Create Ticket** to
+start a new ticket — the AI will ask clarifying questions, implement code in an
+isolated git worktree, and run tests.
 
-Two config files, no hardcoded paths:
+## What You Configure
 
-### `.env` — paths & overrides (key=value)
+| File | What goes there |
+|---|---|
+| `.env` | **Your machine-specific values** — project path, coder binary path, remote hostname, ports. Gitignored. |
+| `config.json` | **Structural defaults** — project name, timeouts. Tracked in git. |
+
+`.env` values override `config.json` values. Everything has a sensible default so
+you can start with just `JIRA_PROJECT_DIR` and `JIRA_CODER_BIN`.
+
+### Minimal `.env`
 
 ```
-PORT=3006
-JIRA_PROJECT_DIR=/path/to/your/project
-JIRA_WORKTREES_DIR=/path/to/your/project/.worktrees
-JIRA_CODER_BIN=/path/to/opencode
-JIRA_CODER_TYPE=opencode
-JIRA_VENV_DIR=.venv
-JIRA_PYTHONPATH=src
-JIRA_TEST_CMD=
+JIRA_PROJECT_DIR=/home/me/my-project
+JIRA_CODER_BIN=/home/me/bin/opencode
 ```
 
-### `config.json` — structural settings
+### All available env vars (see `.env.example`)
 
-```json
-{
-  "port": 3006,
-  "project": {
-    "name": "your-project-name",
-    "path": "/path/to/your/project"
-  },
-  "coder": {
-    "type": "opencode",
-    "bin": "/path/to/opencode",
-    "timeouts": {
-      "clarify": 180000,
-      "implement": 600000
-    }
-  }
-}
-```
+| Var | What | Default |
+|---|---|---|
+| `PORT` | Dashboard port | `3006` |
+| `JIRA_PROJECT_DIR` | Your project's root | `process.cwd()` |
+| `JIRA_PROJECT_NAME` | Display name in header | `"project"` |
+| `JIRA_CODER_BIN` | Path to your AI coder CLI | `"opencode"` |
+| `JIRA_CODER_TYPE` | Coder backend | `"opencode"` |
+| `JIRA_DATA_DIR` | Separate database directory | `<dashboard>/data/` |
+| `REMOTE_HOST` | SSH host for VSCode/Cursor links | `"example-claw"` |
+| `GIT_DEFAULT_BRANCH` | Your repo's main branch | `"main"` |
+| `MERGE_STRATEGY` | How to close tickets: `cherry-pick` or `pr` | `"cherry-pick"` |
+| `EXPLORER_URL` | URL template for diff file links | GitHub blob URL |
 
-`.env` values override `config.json` values when both set.
+## Workflow
 
-## Coder Backends
+1. **Create Ticket** — give it a title, optionally describe what you want
+2. **Clarify** — the AI asks questions to understand the task; answer them
+3. **Implement** — the AI writes code in a dedicated git worktree
+4. **Review** — see the diff, provide feedback, iterate
+5. **Ready** — commits are squashed, then either cherry-picked into your
+   default branch or pushed as a PR (see `MERGE_STRATEGY`)
 
-The dashboard abstracts the AI coding tool behind a common interface (`coder.js`).
+Progress streams live via SSE — you see AI reasoning, resource usage, and test
+output as it happens.
 
-- **opencode** — default backend, uses the opencode CLI
-- **dummy** — test backend, echoes prompts (for unit testing)
+## Coder Backend
 
-To add a new backend, add a handler object to `coder.js` with:
-- `stats()` — returns `{ cost, input, output }`
-- `listSessions()` — returns session list text
-- `buildArgs(prompt, sessionId, title)` — CLI arguments array
-- `buildEnv()` — environment variables
+The dashboard works with any CLI tool that can accept a prompt, stream output,
+and report token usage. Currently ships with:
 
-## Pre-push Hook
+- **opencode** (default) — https://opencode.ai
+- **dummy** — echoes prompts, used for testing
 
-```bash
-git config core.hooksPath .githooks
-```
+Add your own backend by implementing `stats()`, `listSessions()`, `buildArgs()`,
+and `buildEnv()` in `coder.js`.
 
-Runs `npm test` before every push. Push is aborted if tests fail.
+---
 
-## Testing
+## For Maintainers
+
+### Tests
 
 ```bash
 npm test            # run all
@@ -88,5 +98,12 @@ npm run test:config # config loader only
 npm run test:prompts # prompt templates only
 npm run test:coder  # coder backend only
 npm run test:helpers # server helpers only
-npm run prepush     # pre-push hook dry-run
 ```
+
+### Pre-push hook
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Runs `npm test` before every push. Aborts if tests fail.
