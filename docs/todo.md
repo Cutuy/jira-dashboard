@@ -31,7 +31,8 @@
 | 🔴 | **Linux-only resource monitor** (`/proc/pid/stat`, page size, clk_tck) | Silently wrong on macOS/Windows |
 | 🟡 | **VSCode/Cursor URI schemes only** | Other editors get dead links |
 | 🟡 | **Python venv assumptions** (`VIRTUAL_ENV`, `PATH` prepend) | Irrelevant noise for non-Python projects |
-| 🟡 | **opencode is the only real coder backend** | Other AI CLIs need a new backend |
+| 🟡 | **opencode is the only real coder backend** | Need backends for claude code, codex, etc. |
+| 🟡 | **Linux-only auto-start** (systemd) | Need macOS launchd plist, Windows schtasks |
 | 🟡 | **No first-run experience** | Empty DB, no config validation — silent failures |
 | 🟡 | **No Docker / containerized setup** | Native module needs C++ build tools |
 | 🟢 | **`better-sqlite3` native module version lock** | Must match Node.js exactly |
