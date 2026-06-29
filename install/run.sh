@@ -42,13 +42,11 @@ ok "Node.js $(node -v)  npm $(npm -v)  git $(git --version | awk '{print $3}')"
 # ── Step 1: Configuration ──────────────────────────────────
 step "Configuration"
 
-default_project="${HOME}/project"
-PROJECT_DIR=$(prompt "Absolute path to your git repo [${default_project}]")
-PROJECT_DIR="${PROJECT_DIR:-$default_project}"
+PROJECT_DIR=$(prompt "Absolute path to your git repo")
 [ "${PROJECT_DIR:0:1}" = "/" ] || fail "Must be an absolute path: ${PROJECT_DIR}"
 [ -d "$PROJECT_DIR" ] || fail "Directory does not exist: ${PROJECT_DIR}"
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
-[ -d "$PROJECT_DIR/.git" ] || fail "${PROJECT_DIR} is not a git repository — worktree features require git"
+[ -d "$PROJECT_DIR/.git" ] || fail "Not a git repository: ${PROJECT_DIR}"
 
 default_name="$(basename "$PROJECT_DIR")"
 PROJECT_NAME=$(prompt "Project display name [${default_name}]")
