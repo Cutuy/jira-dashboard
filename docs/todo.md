@@ -7,20 +7,9 @@
 
 ## Compatibility
 
-| Repo     | Coder             | Server OS | Tested |
-|----------|-------------------|-----------|--------|
-| local    | opencode          | linux     | ✅     |
-| local    | claude code       | linux     |        |
-| local    | codex             | linux     |        |
-| remote ssh | opencode        | linux     |        |
-| remote ssh | claude code     | linux     |        |
-| remote ssh | codex           | linux     |        |
-| local    | opencode          | mac       |        |
-| local    | claude code       | mac       |        |
-| local    | codex             | mac       |        |
-| local    | opencode          | windows   |        |
-| local    | claude code       | windows   |        |
-| local    | codex             | windows   |        |
+Test full matrix: local/remote-ssh × opencode/claude/codex × linux/mac/windows.
+
+Tested: local + opencode + linux only.
 
 ## Portability
 
