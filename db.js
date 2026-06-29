@@ -360,7 +360,14 @@ function close() {
 // "n/a" cleanly.
 
 // Token parser helpers
-function _parseToken(s) { return parseFloat((s || '0').replace(/[,KMBk]/g, '')) || 0; }
+function _parseToken(s) {
+  if (!s) return 0;
+  const raw = parseFloat(s.replace(/[,]/g, '')) || 0;
+  if (/[Bb]$/.test(s)) return raw * 1e9;
+  if (/[Mm]$/.test(s)) return raw * 1e6;
+  if (/[Kk]$/.test(s)) return raw * 1e3;
+  return raw;
+}
 function _parseCost(s) { return parseFloat((s || '0').replace(/[$,]/g, '')) || 0; }
 
 function _emptyBucket() { return { cpu: 0, elapsed: 0, peak_mem: 0, tokens_in: 0, tokens_out: 0, cost: 0, calls: 0 }; }
