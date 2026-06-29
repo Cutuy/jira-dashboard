@@ -80,6 +80,30 @@ and report token usage. Currently ships with:
 Add your own backend by implementing `stats()`, `listSessions()`, `buildArgs()`,
 and `buildEnv()` in `coder.js`.
 
+### How the coder process is launched
+
+When the dashboard needs to run the coder (suggestions, clarification, implementation):
+it spawns the binary as a child process with:
+
+- **Working directory** = `<projectDir>` (your git repo root)
+- **Environment** = `process.env` (dashboard's own environment), plus:
+  - Variables from `<project>/.env` are injected at startup by `config.js`
+  - `VIRTUAL_ENV` and `PATH` are prepended with the project's `.venv/bin/`
+    (if using the Python venv helper)
+- **Timeout** = configurable per stage in `config.json` → `coder.timeouts`
+
+### Caveats
+
+- **API keys** must be in `<project>/.env` (not `.jira-dashboard/.env`).
+  The dashboard injects `<project>/.env` into the child's environment so the
+  coder CLI can authenticate. Keys in `.jira-dashboard/.env` are used for
+  dashboard config only and are NOT passed to the coder.
+- **Python projects** get `VIRTUAL_ENV` and `.venv/bin/` prepended to `PATH`
+  automatically. Non-Python projects can ignore this — the venv helper is a
+  no-op if the directory doesn't exist.
+- **Platform** — the resource monitor reads `/proc/<pid>/stat` (Linux only).
+  On macOS/Windows it silently skips resource tracking.
+
 ---
 
 ## For Maintainers
