@@ -5,6 +5,23 @@
 - Theme toggle "auto" doesn't follow system preference. Manual dark/light work.
 - Copy link (in ticket) doesn't work in some browsers.
 
+## Compatibility
+
+| Repo     | Coder             | Server OS | Tested |
+|----------|-------------------|-----------|--------|
+| local    | opencode          | linux     | ✅     |
+| local    | claude code       | linux     |        |
+| local    | codex             | linux     |        |
+| remote ssh | opencode        | linux     |        |
+| remote ssh | claude code     | linux     |        |
+| remote ssh | codex           | linux     |        |
+| local    | opencode          | mac       |        |
+| local    | claude code       | mac       |        |
+| local    | codex             | mac       |        |
+| local    | opencode          | windows   |        |
+| local    | claude code       | windows   |        |
+| local    | codex             | windows   |        |
+
 ## Portability
 
 - Test runner is Python-only (`python -m project.test`). Broken for JS/Go/Rust.
