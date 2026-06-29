@@ -70,8 +70,8 @@ const STAGE_META: Record<Stage, { label: string; dot: string; pill: string }> = 
   },
   done: {
     label: 'Done',
-    dot:   'bg-zinc-400',
-    pill:  'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200',
+    dot:   'bg-ink-3',
+    pill:  'bg-surface-3 text-ink-2 ring-1 ring-border',
   },
 }
 
@@ -94,10 +94,10 @@ function Btn({
     md: 'h-11 sm:h-9 px-4 sm:px-3 t-body',
   }
   const variants = {
-    default:    'bg-zinc-900 text-white hover:bg-zinc-800',
-    outline:    'bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-900',
-    ghost:      'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900',
-    secondary:  'bg-zinc-100 text-zinc-700 hover:bg-zinc-200',
+    default:    'bg-brand text-brand-fg hover:bg-zinc-700',
+    outline:    'bg-surface text-ink-2 ring-1 ring-border hover:bg-bg hover:text-ink-1',
+    ghost:      'text-ink-2 hover:bg-surface-3 hover:text-ink-1',
+    secondary:  'bg-surface-3 text-ink-2 hover:bg-surface-3',
     danger:     'bg-red-600 text-white hover:bg-red-700',
   }
   return (
@@ -109,7 +109,7 @@ function Btn({
 
 function StagePill({ stage }: { stage: string }) {
   const m = STAGE_META[stage as Stage]
-  if (!m) return <span className="t-meta text-zinc-500">{stage}</span>
+  if (!m) return <span className="t-meta text-ink-2">{stage}</span>
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 t-meta font-medium ${m.pill}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />
@@ -122,7 +122,7 @@ function IconBtn({ children, label, ...rest }: React.ButtonHTMLAttributes<HTMLBu
   return (
     <button
       aria-label={label}
-      className="h-10 w-10 sm:h-7 sm:w-7 inline-flex items-center justify-center rounded-md text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20"
+      className="h-10 w-10 sm:h-7 sm:w-7 inline-flex items-center justify-center rounded-md text-ink-2 hover:text-ink-1 hover:bg-surface-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20"
       {...rest}
     >
       {children}
@@ -140,20 +140,20 @@ function TicketCard({ t, onOpen }: { t: T; onOpen: (id: string) => void }) {
   return (
     <button
       onClick={() => onOpen(t.id)}
-      className="group w-full text-left bg-white rounded-lg ring-1 ring-zinc-200 hover:ring-zinc-300 hover:shadow-sm active:bg-zinc-50 transition-all p-3.5 flex flex-col gap-2.5"
+      className="group w-full text-left bg-surface rounded-lg ring-1 ring-border hover:ring-ink-3 hover:shadow-sm active:bg-bg transition-all p-3.5 flex flex-col gap-2.5"
     >
       <div className="flex items-center justify-between">
-        <span className="t-mono-11 text-zinc-400 truncate">{t.id}</span>
+        <span className="t-mono-11 text-ink-3 truncate">{t.id}</span>
         {running && <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />}
       </div>
-      <p className="t-body font-medium text-zinc-900 clamp-2 leading-snug">{t.title}</p>
-      <div className="flex items-center justify-between pt-1 border-t border-zinc-100">
-        <div className="flex items-center gap-1.5 t-meta text-zinc-500 min-w-0">
+      <p className="t-body font-medium text-ink-1 clamp-2 leading-snug">{t.title}</p>
+      <div className="flex items-center justify-between pt-1 border-t border-surface-3">
+        <div className="flex items-center gap-1.5 t-meta text-ink-2 min-w-0">
           {meta && <span className={`h-1.5 w-1.5 rounded-full ${meta.dot} shrink-0`} />}
           <span className="truncate">{timeAgo(t.updated_at)}</span>
         </div>
         {qaCount > 0 && (
-          <span className="t-meta text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded shrink-0 ml-2">
+          <span className="t-meta text-ink-2 bg-surface-3 px-1.5 py-0.5 rounded shrink-0 ml-2">
             {qaCount} Q&amp;A
           </span>
         )}
@@ -181,12 +181,12 @@ function QuestionCard({
   const otherValue = isOther ? answer.slice(OTHER_MARKER.length) : ''
 
   return (
-    <div className="rounded-lg ring-1 ring-zinc-200 bg-white p-3.5">
+    <div className="rounded-lg ring-1 ring-border bg-surface p-3.5">
       <div className="flex gap-3">
-        <span className="t-mono-11 text-zinc-400 shrink-0 mt-0.5 w-6">Q{index}</span>
+        <span className="t-mono-11 text-ink-3 shrink-0 mt-0.5 w-6">Q{index}</span>
         <div className="flex-1 min-w-0">
           <p
-            className={`t-body text-zinc-900 leading-relaxed ${!expanded && long ? 'clamp-3' : ''}`}
+            className={`t-body text-ink-1 leading-relaxed ${!expanded && long ? 'clamp-3' : ''}`}
             title={q.question}
           >
             {q.question}
@@ -194,7 +194,7 @@ function QuestionCard({
           {long && (
             <button
               onClick={() => setExpanded(s => !s)}
-              className="t-meta text-zinc-500 hover:text-zinc-900 mt-1 font-medium"
+              className="t-meta text-ink-2 hover:text-ink-1 mt-1 font-medium"
             >
               {expanded ? 'Show less' : 'Read more'}
             </button>
@@ -212,8 +212,8 @@ function QuestionCard({
                   key={oi}
                   className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer transition-colors t-body ${
                     answer === opt
-                      ? 'bg-zinc-900 text-white'
-                      : 'hover:bg-zinc-100 text-zinc-700'
+                      ? 'bg-brand text-brand-fg'
+                      : 'hover:bg-surface-3 text-ink-2'
                   }`}
                 >
                   <input
@@ -226,9 +226,9 @@ function QuestionCard({
                     className="sr-only"
                   />
                   <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                    answer === opt ? 'border-white' : 'border-zinc-300'
+                    answer === opt ? 'border-white' : 'border-ink-3'
                   }`}>
-                    {answer === opt && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                    {answer === opt && <span className="h-1.5 w-1.5 rounded-full bg-surface" />}
                   </span>
                   {opt}
                 </label>
@@ -237,8 +237,8 @@ function QuestionCard({
               <label
                 className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer transition-colors t-body ${
                   isOther
-                    ? 'bg-zinc-900 text-white'
-                    : 'hover:bg-zinc-100 text-zinc-700'
+                    ? 'bg-brand text-brand-fg'
+                    : 'hover:bg-surface-3 text-ink-2'
                 }`}
               >
                 <input
@@ -251,9 +251,9 @@ function QuestionCard({
                   className="sr-only"
                 />
                 <span className={`h-3.5 w-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                  isOther ? 'border-white' : 'border-zinc-300'
+                  isOther ? 'border-white' : 'border-ink-3'
                 }`}>
-                  {isOther && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                  {isOther && <span className="h-1.5 w-1.5 rounded-full bg-surface" />}
                 </span>
                 Something else…
               </label>
@@ -266,7 +266,7 @@ function QuestionCard({
                     placeholder="Type your answer…"
                     disabled={disabled}
                     autoFocus
-                    className="w-full h-8 px-2.5 rounded-md ring-1 ring-zinc-200 focus:ring-2 focus:ring-zinc-900/20 t-small text-zinc-900 placeholder:text-zinc-400 bg-white"
+                    className="w-full h-8 px-2.5 rounded-md ring-1 ring-border focus:ring-2 focus:ring-zinc-900/20 t-small text-ink-1 placeholder:text-ink-3 bg-surface"
                   />
                 </div>
               )}
@@ -278,7 +278,7 @@ function QuestionCard({
               name={`a-${q.id}`}
               placeholder="Type your answer (optional)…"
               disabled={disabled}
-              className="mt-2 w-full h-8 px-2.5 rounded-md ring-1 ring-zinc-200 focus:ring-2 focus:ring-zinc-900/20 t-small text-zinc-900 placeholder:text-zinc-400 bg-white"
+              className="mt-2 w-full h-8 px-2.5 rounded-md ring-1 ring-border focus:ring-2 focus:ring-zinc-900/20 t-small text-ink-1 placeholder:text-ink-3 bg-surface"
             />
           )}
         </div>
@@ -294,17 +294,17 @@ function ActivitySidebar({ items }: { items: A[] }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
   if (!items.length) {
     return (
-      <aside className="w-full lg:w-[240px] shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-200 pt-4 lg:pt-0 lg:pl-4">
-        <h4 className="t-meta font-semibold text-zinc-500 uppercase tracking-wider mb-3">Activity</h4>
-        <p className="t-small text-zinc-400">No activity yet.</p>
+      <aside className="w-full lg:w-[240px] shrink-0 border-t lg:border-t-0 lg:border-l border-border pt-4 lg:pt-0 lg:pl-4">
+        <h4 className="t-meta font-semibold text-ink-2 uppercase tracking-wider mb-3">Activity</h4>
+        <p className="t-small text-ink-3">No activity yet.</p>
       </aside>
     )
   }
   return (
-    <aside className="w-full lg:w-[240px] shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-200 pt-4 lg:pt-0 lg:pl-4">
-      <h4 className="t-meta font-semibold text-zinc-500 uppercase tracking-wider mb-3">
+    <aside className="w-full lg:w-[240px] shrink-0 border-t lg:border-t-0 lg:border-l border-border pt-4 lg:pt-0 lg:pl-4">
+      <h4 className="t-meta font-semibold text-ink-2 uppercase tracking-wider mb-3">
         Activity
-        <span className="ml-1.5 text-zinc-400 normal-case tracking-normal font-normal">
+        <span className="ml-1.5 text-ink-3 normal-case tracking-normal font-normal">
           {items.length}
         </span>
       </h4>
@@ -313,15 +313,15 @@ function ActivitySidebar({ items }: { items: A[] }) {
           <li key={i}>
             <button
               onClick={() => setExpanded(s => ({ ...s, [i]: !s[i] }))}
-              className="w-full text-left rounded px-2 py-2 sm:px-1.5 sm:py-1 -mx-2 sm:-mx-1.5 hover:bg-zinc-50 active:bg-zinc-100 transition-colors"
+              className="w-full text-left rounded px-2 py-2 sm:px-1.5 sm:py-1 -mx-2 sm:-mx-1.5 hover:bg-bg active:bg-surface-3 transition-colors"
             >
               <div className="flex items-baseline gap-2">
-                <span className="t-mono-11 text-zinc-400 shrink-0 w-14 sm:w-12">{timeAgo(a.time)}</span>
-                <span className="t-small font-medium text-zinc-700 truncate">{a.action}</span>
+                <span className="t-mono-11 text-ink-3 shrink-0 w-14 sm:w-12">{timeAgo(a.time)}</span>
+                <span className="t-small font-medium text-ink-2 truncate">{a.action}</span>
               </div>
               {expanded[i] && a.detail && (
-                <div className="mt-1 ml-14 pl-2 border-l border-zinc-200">
-                  <p className="t-mono-11 text-zinc-500 break-words leading-relaxed whitespace-pre-wrap">
+                <div className="mt-1 ml-14 pl-2 border-l border-border">
+                  <p className="t-mono-11 text-ink-2 break-words leading-relaxed whitespace-pre-wrap">
                     {a.detail}
                   </p>
                 </div>
@@ -361,17 +361,17 @@ function SuggestionCard({ sug, onAccept, onDismiss }: { sug: Sug; onAccept: (s: 
   const [open, setOpen] = useState(false)
   return (
     <div
-      className="bg-white rounded-lg ring-1 ring-zinc-200 px-3.5 py-2.5 cursor-pointer hover:ring-zinc-400 transition-colors"
+      className="bg-surface rounded-lg ring-1 ring-border px-3.5 py-2.5 cursor-pointer hover:ring-ink-2 transition-colors"
       onClick={() => setOpen(o => !o)}
     >
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <p className={`t-body font-medium text-zinc-900 ${open ? '' : 'truncate'}`}>{sug.title}</p>
-          <p className={`t-small text-zinc-500 mt-0.5 ${open ? '' : 'clamp-2'}`}>{sug.content}</p>
+          <p className={`t-body font-medium text-ink-1 ${open ? '' : 'truncate'}`}>{sug.title}</p>
+          <p className={`t-small text-ink-2 mt-0.5 ${open ? '' : 'clamp-2'}`}>{sug.content}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-          <button onClick={() => onAccept(sug)} className="px-2.5 py-1 rounded text-xs font-medium bg-zinc-900 text-white hover:bg-zinc-700">Accept</button>
-          <button onClick={() => onDismiss(sug)} className="px-2.5 py-1 rounded text-xs font-medium text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100">Dismiss</button>
+          <button onClick={() => onAccept(sug)} className="px-2.5 py-1 rounded text-xs font-medium bg-brand text-brand-fg hover:bg-zinc-700">Accept</button>
+          <button onClick={() => onDismiss(sug)} className="px-2.5 py-1 rounded text-xs font-medium text-ink-3 hover:text-ink-2 hover:bg-surface-3">Dismiss</button>
         </div>
       </div>
     </div>
@@ -410,9 +410,9 @@ function TestReportPanel({
 
   if (!test) {
     return (
-      <div className="flex items-center justify-between rounded-md ring-1 ring-zinc-200 bg-zinc-50 px-3 py-2.5">
-        <div className="flex items-center gap-2 t-small text-zinc-500">
-          <Circle className="h-3.5 w-3.5 text-zinc-400" />
+      <div className="flex items-center justify-between rounded-md ring-1 ring-border bg-bg px-3 py-2.5">
+        <div className="flex items-center gap-2 t-small text-ink-2">
+          <Circle className="h-3.5 w-3.5 text-ink-3" />
           No tests run yet
         </div>
         <Btn variant="outline" size="sm" onClick={onRerun} disabled={rerunning}>
@@ -445,11 +445,11 @@ function TestReportPanel({
   const hasMore = outputLines.length > 30
 
   return (
-    <div className="rounded-md ring-1 ring-zinc-200 bg-white overflow-hidden">
+    <div className="rounded-md ring-1 ring-border bg-surface overflow-hidden">
       <div className="flex items-center justify-between gap-3 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
           {pill}
-          {meta && <span className="t-small text-zinc-500 truncate">{meta}</span>}
+          {meta && <span className="t-small text-ink-2 truncate">{meta}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {test.output && (
@@ -466,7 +466,7 @@ function TestReportPanel({
         </div>
       </div>
       {test.command && (
-        <div className="px-3 py-1.5 border-t border-zinc-100 t-mono-11 text-zinc-500 truncate">
+        <div className="px-3 py-1.5 border-t border-surface-3 t-mono-11 text-ink-2 truncate">
           $ {test.command}
         </div>
       )}
@@ -522,8 +522,8 @@ function ResourceMetrics({
     const tag = s.calls > 1 ? `${s.calls} calls` : '1 call'
     return (
       <div className="space-y-1">
-        <h5 className="t-meta text-zinc-500 uppercase tracking-wider flex items-baseline gap-1.5">
-          {label} <span className="normal-case tracking-normal font-normal text-zinc-400">{tag}</span>
+        <h5 className="t-meta text-ink-2 uppercase tracking-wider flex items-baseline gap-1.5">
+          {label} <span className="normal-case tracking-normal font-normal text-ink-3">{tag}</span>
         </h5>
         <div className="grid grid-cols-2 gap-2">
           <MetricCompact label="CPU"     value={`${fmtNum(s.cpu)}s`} />
@@ -558,7 +558,7 @@ function ResourceMetrics({
       {/* Running metrics (live) shown below per-stage totals */}
       {hasLive && (
         <div className="space-y-1">
-          <h5 className="t-meta text-zinc-500 uppercase tracking-wider">Live</h5>
+          <h5 className="t-meta text-ink-2 uppercase tracking-wider">Live</h5>
           <div className="grid grid-cols-2 gap-2">
             <MetricCompact label="CPU rate" value={`${fmtNum(rate)}/${cores} cores`} />
             <MetricCompact label="Memory"   value={`${mem.toFixed(0)} MB`} />
@@ -568,21 +568,21 @@ function ResourceMetrics({
             {cur?.cost && <MetricCompact label="Cost" value={fmtCost(deltaCost)} />}
             {cpuPct !== undefined && (
               <div className="col-span-2">
-                <div className="flex items-baseline justify-between t-meta text-zinc-500 uppercase tracking-wider font-medium">
+                <div className="flex items-baseline justify-between t-meta text-ink-2 uppercase tracking-wider font-medium">
                   <span>CPU util</span>
-                  <span className="t-mono-11 text-zinc-400">{cpuPct.toFixed(0)}%</span>
+                  <span className="t-mono-11 text-ink-3">{cpuPct.toFixed(0)}%</span>
                 </div>
-                <div className="mt-1 h-1 rounded-full bg-zinc-100 overflow-hidden">
+                <div className="mt-1 h-1 rounded-full bg-surface-3 overflow-hidden">
                   <div className="h-full bg-zinc-900" style={{ width: cpuPct + '%' }} />
                 </div>
               </div>
             )}
             <div className="col-span-2">
-              <div className="flex items-baseline justify-between t-meta text-zinc-500 uppercase tracking-wider font-medium">
+              <div className="flex items-baseline justify-between t-meta text-ink-2 uppercase tracking-wider font-medium">
                 <span>Memory util</span>
-                <span className="t-mono-11 text-zinc-400">{mem.toFixed(0)} / {peakMem.toFixed(0)} MB</span>
+                <span className="t-mono-11 text-ink-3">{mem.toFixed(0)} / {peakMem.toFixed(0)} MB</span>
               </div>
-              <div className="mt-1 h-1 rounded-full bg-zinc-100 overflow-hidden">
+              <div className="mt-1 h-1 rounded-full bg-surface-3 overflow-hidden">
                 <div className="h-full bg-zinc-900" style={{ width: memPct + '%' }} />
               </div>
             </div>
@@ -592,7 +592,7 @@ function ResourceMetrics({
 
       {/* Grand total (shown when there's per-stage data) */}
       {hasFinished && (
-        <div className="border-t border-zinc-200 pt-3 grid grid-cols-2 gap-2">
+        <div className="border-t border-border pt-3 grid grid-cols-2 gap-2">
           <MetricCompact label="CPU total"   value={`${fmtNum(sr.total.cpu)}s`} />
           <MetricCompact label="Elapsed"     value={`${sr.total.elapsed}s`} />
           <MetricCompact label="Memory peak" value={`${sr.total.peak_mem.toFixed(0)} MB`} />
@@ -607,8 +607,8 @@ function ResourceMetrics({
 function MetricCompact({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-x-2">
-      <span className="t-meta text-zinc-500 uppercase tracking-wider font-medium shrink-0">{label}</span>
-      <span className="t-mono-11 text-zinc-700 text-right break-words">{value}</span>
+      <span className="t-meta text-ink-2 uppercase tracking-wider font-medium shrink-0">{label}</span>
+      <span className="t-mono-11 text-ink-2 text-right break-words">{value}</span>
     </div>
   )
 }
@@ -618,15 +618,15 @@ function Metric({ label, value, pct, barClass, sub }:
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-y-0.5 sm:gap-x-2">
-        <span className="t-meta text-zinc-500 uppercase tracking-wider font-medium">{label}</span>
-        <span className="t-mono-11 text-zinc-700 sm:text-right break-words">{value}</span>
+        <span className="t-meta text-ink-2 uppercase tracking-wider font-medium">{label}</span>
+        <span className="t-mono-11 text-ink-2 sm:text-right break-words">{value}</span>
       </div>
       {pct !== undefined && (
-        <div className="mt-1 h-1 rounded-full bg-zinc-100 overflow-hidden">
+        <div className="mt-1 h-1 rounded-full bg-surface-3 overflow-hidden">
           <div className={`h-full ${barClass}`} style={{ width: pct + '%' }} />
         </div>
       )}
-      {sub && <div className="t-mono-11 text-zinc-400 mt-0.5">{sub}</div>}
+      {sub && <div className="t-mono-11 text-ink-3 mt-0.5">{sub}</div>}
     </div>
   )
 }
@@ -697,6 +697,14 @@ export default function App() {
   useEffect(() => { selRef.current = sel }, [sel])
   const openRef = useRef(open)
   useEffect(() => { openRef.current = open }, [open])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const update = () => document.documentElement.classList.toggle('dark', mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
 
   useEffect(() => { fetchJSON<ClientConfig>('/api/config').then(setCfg).catch(() => {}); load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i) }, [load])
 
@@ -1024,13 +1032,13 @@ export default function App() {
   }, [sel])
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900">
+    <div className="min-h-screen bg-bg text-ink-1">
       {/* ── Header ── */}
-      <header className="sticky top-0 z-30 bg-white/85 backdrop-blur border-b border-zinc-200">
+      <header className="sticky top-0 z-30 bg-surface/85 backdrop-blur border-b border-border">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-12 flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2 min-w-0">
-            <h1 className="t-h-page text-zinc-900 shrink-0">{cfg.projectName}</h1>
-            <span className="t-small text-zinc-500 hidden sm:inline truncate">Project tickets</span>
+            <h1 className="t-h-page text-ink-1 shrink-0">{cfg.projectName}</h1>
+            <span className="t-small text-ink-2 hidden sm:inline truncate">Project tickets</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {cfg.testEnabled && (
@@ -1050,21 +1058,21 @@ export default function App() {
       {/* ── Main ── */}
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
         {/* Inline new-ticket form */}
-        <div className="bg-white rounded-lg ring-1 ring-zinc-200 p-3 mb-5 sm:mb-6">
+        <div className="bg-surface rounded-lg ring-1 ring-border p-3 mb-5 sm:mb-6">
           <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
             <input
               value={title}
               onChange={e => { setTitle(e.target.value); setError('') }}
               name="ticket-title"
               placeholder="Ticket title…"
-              className="w-full sm:w-[280px] h-10 sm:h-8 px-3 rounded-md ring-1 ring-zinc-200 focus:ring-2 focus:ring-zinc-900/20 t-body text-zinc-900 placeholder:text-zinc-400 bg-white"
+              className="w-full sm:w-[280px] h-10 sm:h-8 px-3 rounded-md ring-1 ring-border focus:ring-2 focus:ring-zinc-900/20 t-body text-ink-1 placeholder:text-ink-3 bg-surface"
             />
             <input
               value={content}
               onChange={e => setContent(e.target.value)}
               name="ticket-content"
               placeholder="Description (optional)"
-              className="w-full sm:flex-1 h-10 sm:h-8 px-3 rounded-md ring-1 ring-zinc-200 focus:ring-2 focus:ring-zinc-900/20 t-body text-zinc-900 placeholder:text-zinc-400 bg-white"
+              className="w-full sm:flex-1 h-10 sm:h-8 px-3 rounded-md ring-1 ring-border focus:ring-2 focus:ring-zinc-900/20 t-body text-ink-1 placeholder:text-ink-3 bg-surface"
             />
             <Btn onClick={create} disabled={creating} size="md" className="w-full sm:w-auto">
               {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -1079,7 +1087,7 @@ export default function App() {
         {/* ── Suggested tickets ── */}
         {suggestions.length > 0 && (
           <div className="mb-5 sm:mb-6">
-            <p className="t-meta font-semibold text-zinc-400 uppercase tracking-wider mb-2">Suggested</p>
+            <p className="t-meta font-semibold text-ink-3 uppercase tracking-wider mb-2">Suggested</p>
             <div className="space-y-2">
               {suggestions.map(sug => (
                 <SuggestionCard key={sug.id} sug={sug} onAccept={acceptSuggestion} onDismiss={dismissSuggestion} />
@@ -1088,7 +1096,7 @@ export default function App() {
           </div>
         )}
         {suggestionsLoading && suggestions.length === 0 && (
-          <div className="mb-5 sm:mb-6 flex items-center gap-2 text-zinc-400 t-small">
+          <div className="mb-5 sm:mb-6 flex items-center gap-2 text-ink-3 t-small">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading suggestions…
           </div>
@@ -1104,17 +1112,17 @@ export default function App() {
                 <header className="flex items-center justify-between mb-2.5 px-1">
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-                    <h3 className="t-meta font-semibold text-zinc-500 uppercase tracking-wider">
+                    <h3 className="t-meta font-semibold text-ink-2 uppercase tracking-wider">
                       {meta.label}
                     </h3>
                   </div>
-                  <span className="t-meta text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">
+                  <span className="t-meta text-ink-3 bg-surface-3 px-1.5 py-0.5 rounded">
                     {items.length}
                   </span>
                 </header>
                 <div className="flex flex-col gap-2.5">
                   {items.length === 0 && (
-                    <div className="rounded-lg border border-dashed border-zinc-200 py-8 text-center t-small text-zinc-400">
+                    <div className="rounded-lg border border-dashed border-border py-8 text-center t-small text-ink-3">
                       No tickets
                     </div>
                   )}
@@ -1131,9 +1139,9 @@ export default function App() {
         <Dialog onClose={close}>
           <DialogHeader>
             <div className="min-w-0 flex-1 pr-2 sm:pr-4">
-              <div className="flex items-center gap-2 sm:gap-2.5 t-meta text-zinc-500 flex-wrap">
+              <div className="flex items-center gap-2 sm:gap-2.5 t-meta text-ink-2 flex-wrap">
                 <span className="t-mono-11 truncate max-w-[140px] sm:max-w-none">{sel.id}</span>
-                <span className="text-zinc-300">·</span>
+                <span className="text-ink-3">·</span>
                 <StagePill stage={sel.stage} />
                 {sel.status === 'running' && (
                   <span className="inline-flex items-center gap-1 text-amber-600">
@@ -1170,7 +1178,7 @@ export default function App() {
                       </span>
                     )}
                     {sel.latest_test.status === 'skip' && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 text-zinc-500 ring-1 ring-zinc-200 px-1.5 py-0.5 t-meta font-medium">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-surface-3 text-ink-2 ring-1 ring-border px-1.5 py-0.5 t-meta font-medium">
                         tests skipped
                       </span>
                     )}
@@ -1182,14 +1190,14 @@ export default function App() {
                   </a>
                 )}
               </div>
-              <h2 className="t-h text-zinc-900 mt-1.5 clamp-2">{sel.title}</h2>
-              <div className="mt-2 flex items-center gap-x-3 gap-y-1 t-meta text-zinc-500 flex-wrap">
+              <h2 className="t-h text-ink-1 mt-1.5 clamp-2">{sel.title}</h2>
+              <div className="mt-2 flex items-center gap-x-3 gap-y-1 t-meta text-ink-2 flex-wrap">
                 <span>Created {timeAgo(sel.created_at)}</span>
-                <span className="text-zinc-300 hidden sm:inline">·</span>
+                <span className="text-ink-3 hidden sm:inline">·</span>
                 <span>Updated {timeAgo(sel.updated_at)}</span>
                 <button
                   onClick={() => copyUrl(sel.id)}
-                  className="inline-flex items-center gap-1 hover:text-zinc-900 active:text-zinc-700 transition-colors"
+                  className="inline-flex items-center gap-1 hover:text-ink-1 active:text-ink-2 transition-colors"
                 >
                   {copied ? <Check className="h-3 w-3" /> : <LinkIcon className="h-3 w-3" />}
                   {copied ? 'Copied' : 'Copy link'}
@@ -1208,7 +1216,7 @@ export default function App() {
               <div className="flex-1 min-w-0 space-y-5">
                 {sel.content && (
                   <Section title="Description">
-                    <p className="t-body text-zinc-700 leading-relaxed whitespace-pre-wrap">
+                    <p className="t-body text-ink-2 leading-relaxed whitespace-pre-wrap">
                       {sel.content}
                     </p>
                   </Section>
@@ -1228,13 +1236,13 @@ export default function App() {
                 {/* Clarification — running (generating questions / processing answers) */}
                 {sel.stage === 'clarification' && sel.status === 'running' && (
                   <Section title="Live status">
-                    <div className="flex items-center gap-2 t-body text-zinc-700 mb-3">
+                    <div className="flex items-center gap-2 t-body text-ink-2 mb-3">
                       <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                       {sel.questions.length > 0 ? 'Processing answers…' : 'Generating questions…'}
                     </div>
                     <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                     {stdoutLines.length > 0 && (
-                      <div className="mt-3 rounded-md ring-1 ring-zinc-200 bg-zinc-950 text-zinc-300 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
+                      <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
                         {stdoutLines.map((l, i) => <div key={i}>{l}</div>)}
                       </div>
                     )}
@@ -1247,7 +1255,7 @@ export default function App() {
                     <div className="space-y-5">
                       {[...new Set(sel.questions.map(q => q.round))].map(round => (
                         <div key={round}>
-                          <p className="t-meta font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+                          <p className="t-meta font-semibold text-ink-2 uppercase tracking-wider mb-2">
                             Round {round}
                           </p>
                           <div className="space-y-2">
@@ -1281,26 +1289,26 @@ export default function App() {
                     )}
                     {sel.status === 'running' ? (
                       <Section title="Live status">
-                        <div className="flex items-center gap-2 t-body text-zinc-700">
+                        <div className="flex items-center gap-2 t-body text-ink-2">
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                           Implementing…
                         </div>
-                        <div className="mt-3 rounded-lg ring-1 ring-zinc-200 p-3">
+                        <div className="mt-3 rounded-lg ring-1 ring-border p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                         </div>
                         {stdoutLines.length > 0 && (
-                          <div className="mt-3 rounded-md ring-1 ring-zinc-200 bg-zinc-950 text-zinc-300 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
+                          <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
                             {stdoutLines.map((l, i) => <div key={i}>{l}</div>)}
                           </div>
                         )}
                         {todoItems.length > 0 && (
                           <div className="mt-3">
-                            <p className="t-meta font-medium text-zinc-500 uppercase tracking-wider mb-1.5">
+                            <p className="t-meta font-medium text-ink-2 uppercase tracking-wider mb-1.5">
                               Progress
                             </p>
-                            <div className="rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100">
+                            <div className="rounded-md ring-1 ring-border divide-y divide-zinc-100">
                               {todoItems.map((item, i) => (
-                                <div key={i} className={`flex items-center gap-2 px-3 py-1.5 t-body ${item.done ? 'text-zinc-400 line-through' : 'text-zinc-700'}`}>
+                                <div key={i} className={`flex items-center gap-2 px-3 py-1.5 t-body ${item.done ? 'text-ink-3 line-through' : 'text-ink-2'}`}>
                                   <span className={`shrink-0 h-3.5 w-3.5 rounded border-2 flex items-center justify-center ${item.done ? 'border-emerald-400 bg-emerald-50' : 'border-zinc-300'}`}>
                                     {item.done && <span className="h-1.5 w-1.5 rounded-sm bg-emerald-500" />}
                                   </span>
@@ -1315,12 +1323,12 @@ export default function App() {
                           if (!f.length) return null
                           return (
                             <div className="mt-3">
-                              <p className="t-meta font-medium text-zinc-500 uppercase tracking-wider mb-1.5">
+                              <p className="t-meta font-medium text-ink-2 uppercase tracking-wider mb-1.5">
                                 Files modified · {f.length}
                               </p>
-                              <div className="rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100">
+                              <div className="rounded-md ring-1 ring-border divide-y divide-zinc-100">
                                 {f.slice(0, FILES_MODIFIED_MAX_VISIBLE).map((a, i) => (
-                                  <p key={i} className="t-mono-12 text-zinc-700 px-3 py-1.5">
+                                  <p key={i} className="t-mono-12 text-ink-2 px-3 py-1.5">
                                     {a.detail}
                                   </p>
                                 ))}
@@ -1330,8 +1338,8 @@ export default function App() {
                         })()}
                       </Section>
                     ) : (
-                      <div className="rounded-lg border border-dashed border-zinc-200 p-6 text-center">
-                        <p className="t-body text-zinc-600 mb-3">Ready to implement.</p>
+                      <div className="rounded-lg border border-dashed border-border p-6 text-center">
+                        <p className="t-body text-ink-2 mb-3">Ready to implement.</p>
                         <Btn onClick={() => impl(sel.id)}>
                           Start Implementation <ArrowRight className="h-3.5 w-3.5" />
                         </Btn>
@@ -1346,17 +1354,17 @@ export default function App() {
                     {sel.worktree_path && (
                       <Section title="Worktree">
                         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 t-mono-12">
-                          <dt className="t-meta text-zinc-500 uppercase tracking-wider self-center">Path</dt>
-                          <dd className="text-zinc-800 break-all">{sel.worktree_path}</dd>
-                          <dt className="t-meta text-zinc-500 uppercase tracking-wider self-center">Branch</dt>
-                          <dd className="text-zinc-800 break-all">{sel.branch_name || '—'}</dd>
+                          <dt className="t-meta text-ink-2 uppercase tracking-wider self-center">Path</dt>
+                          <dd className="text-ink-1 break-all">{sel.worktree_path}</dd>
+                          <dt className="t-meta text-ink-2 uppercase tracking-wider self-center">Branch</dt>
+                          <dd className="text-ink-1 break-all">{sel.branch_name || '—'}</dd>
                         </dl>
                         <div className="mt-3 flex gap-2 flex-wrap">
                           <a
                             href={`vscode://vscode-remote/ssh-remote+${cfg.remoteHost}${sel.worktree_path}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-zinc-200 hover:bg-zinc-50 t-small text-zinc-700"
+                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-border hover:bg-bg t-small text-ink-2"
                           >
                             <ExternalLink className="h-3.5 w-3.5" /> Open in VSCode
                           </a>
@@ -1364,7 +1372,7 @@ export default function App() {
                             href={`cursor://ssh-remote+${cfg.remoteHost}${sel.worktree_path}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-zinc-200 hover:bg-zinc-50 t-small text-zinc-700"
+                            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-border hover:bg-bg t-small text-ink-2"
                           >
                             <ExternalLink className="h-3.5 w-3.5" /> Open in Cursor
                           </a>
@@ -1396,15 +1404,15 @@ export default function App() {
                               .replace(/\{repo\}/g, encodeURI(cfg.explorer.repo))
                           }
                           return (
-                            <div className="mb-3 rounded-md ring-1 ring-zinc-200 divide-y divide-zinc-100 overflow-hidden">
+                            <div className="mb-3 rounded-md ring-1 ring-border divide-y divide-zinc-100 overflow-hidden">
                               {explorerPrefix && (
                                 <a
                                   href={explorerUrl('')}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="flex items-center gap-2 px-3 py-1.5 t-small text-zinc-600 hover:bg-zinc-50"
+                                  className="flex items-center gap-2 px-3 py-1.5 t-small text-ink-2 hover:bg-bg"
                                 >
-                                  <ExternalLink className="h-3.5 w-3.5 text-zinc-400" />
+                                  <ExternalLink className="h-3.5 w-3.5 text-ink-3" />
                                   Open worktree root in Explorer ↗
                                 </a>
                               )}
@@ -1414,10 +1422,10 @@ export default function App() {
                                   href={explorerUrl(f.path)}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="flex items-center gap-2 px-3 py-1.5 t-mono-12 text-zinc-700 hover:bg-zinc-50 group"
+                                  className="flex items-center gap-2 px-3 py-1.5 t-mono-12 text-ink-2 hover:bg-bg group"
                                   title={`Open ${f.path} in Explorer`}
                                 >
-                                  <ExternalLink className="h-3.5 w-3.5 text-zinc-300 group-hover:text-zinc-500 shrink-0" />
+                                  <ExternalLink className="h-3.5 w-3.5 text-ink-3 group-hover:text-ink-2 shrink-0" />
                                   <span className="truncate">{f.path}</span>
                                 </a>
                               ))}
@@ -1448,7 +1456,7 @@ export default function App() {
                     )}
                     {sel.worktree_path && (
                       <Section title="Resource usage">
-                        <div className="rounded-md ring-1 ring-zinc-200 p-3">
+                        <div className="rounded-md ring-1 ring-border p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                         </div>
                       </Section>
@@ -1460,7 +1468,7 @@ export default function App() {
                         name="fb"
                         placeholder="Send back to clarification with new questions…"
                         rows={3}
-                        className="w-full rounded-md ring-1 ring-zinc-200 focus:ring-2 focus:ring-zinc-900/20 px-3 py-2 t-body text-zinc-900 placeholder:text-zinc-400 resize-none"
+                        className="w-full rounded-md ring-1 ring-border focus:ring-2 focus:ring-zinc-900/20 px-3 py-2 t-body text-ink-1 placeholder:text-ink-3 resize-none"
                       />
                       {error && <p className="t-small text-red-600 mt-1.5">{error}</p>}
                     </Section>
@@ -1500,7 +1508,7 @@ export default function App() {
                       </Section>
                     )}
                     <Section title="Resource usage">
-                      <div className="rounded-md ring-1 ring-zinc-200 p-3">
+                      <div className="rounded-md ring-1 ring-border p-3">
                         <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                       </div>
                     </Section>
@@ -1509,13 +1517,13 @@ export default function App() {
                         <div className="space-y-3">
                           {sel.questions.map((q, i) => (
                             <div key={q.id} className="t-body">
-                              <p className="text-zinc-900 leading-relaxed">
-                                <span className="t-mono-11 text-zinc-400 mr-2">Q{i + 1}</span>
+                              <p className="text-ink-1 leading-relaxed">
+                                <span className="t-mono-11 text-ink-3 mr-2">Q{i + 1}</span>
                                 {q.question}
                               </p>
                               {q.answer && (
-                                <p className="text-zinc-600 leading-relaxed mt-0.5 pl-5">
-                                  <span className="t-mono-11 text-zinc-400 mr-2">A{i + 1}</span>
+                                <p className="text-ink-2 leading-relaxed mt-0.5 pl-5">
+                                  <span className="t-mono-11 text-ink-3 mr-2">A{i + 1}</span>
                                   {q.answer}
                                 </p>
                               )}
@@ -1580,7 +1588,7 @@ export default function App() {
       {out.open && (
         <Dialog onClose={() => setOut({ open: false, title: '', text: '', status: '' })} size="md">
           <DialogHeader>
-            <h2 className="t-h text-zinc-900">{out.title}</h2>
+            <h2 className="t-h text-ink-1">{out.title}</h2>
             <IconBtn label="Close" onClick={() => setOut({ open: false, title: '', text: '', status: '' })}>
               <X className="h-4 w-4" />
             </IconBtn>
@@ -1615,10 +1623,10 @@ function Dialog({
   // sm+: centered card with viewport padding, rounded, max-w constrained.
   return (
     <div className="fixed inset-0 z-40 sm:flex sm:items-start sm:justify-center sm:pt-[4vh] sm:pb-[4vh]">
-      <div className="fixed inset-0 bg-zinc-900/40 sm:backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40 sm:backdrop-blur-[2px]" onClick={onClose} />
       <div
         className={[
-          'relative z-50 bg-white sm:rounded-xl sm:shadow-2xl sm:ring-1 sm:ring-zinc-200',
+          'relative z-50 bg-surface sm:rounded-xl sm:shadow-2xl sm:ring-1 sm:ring-border',
           'flex flex-col h-full sm:h-auto sm:max-h-[92vh]',
           size === 'lg'
             ? 'w-full sm:w-[95vw] sm:max-w-[1024px]'
@@ -1633,7 +1641,7 @@ function Dialog({
 
 function DialogHeader({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`flex items-start justify-between px-4 sm:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4 border-b border-zinc-100 ${className}`}>
+    <div className={`flex items-start justify-between px-4 sm:px-6 pt-4 sm:pt-5 pb-3 sm:pb-4 border-b border-surface-3 ${className}`}>
       {children}
     </div>
   )
@@ -1641,7 +1649,7 @@ function DialogHeader({ children, className = '' }: { children: React.ReactNode;
 
 function DialogFooter({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-end gap-2 px-4 sm:px-6 py-3 sm:py-3.5 border-t border-zinc-100 bg-zinc-50/50 sm:rounded-b-xl">
+    <div className="flex items-center justify-end gap-2 px-4 sm:px-6 py-3 sm:py-3.5 border-t border-surface-3 bg-bg/50 sm:rounded-b-xl">
       {children}
     </div>
   )
@@ -1653,10 +1661,10 @@ function Section({
   return (
     <section>
       <div className="flex items-baseline justify-between mb-2.5">
-        <h3 className="t-meta font-semibold text-zinc-500 uppercase tracking-wider">
+        <h3 className="t-meta font-semibold text-ink-2 uppercase tracking-wider">
           {title}
         </h3>
-        {hint && <span className="t-meta text-zinc-400">{hint}</span>}
+        {hint && <span className="t-meta text-ink-3">{hint}</span>}
       </div>
       {children}
     </section>

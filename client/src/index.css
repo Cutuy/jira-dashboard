@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ─────────────────────────────────────────────────────────
    Design tokens — one source of truth for type, color, space.
@@ -54,6 +55,37 @@
     system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Dark mode — overrides for theme tokens
+   ───────────────────────────────────────────────────────── */
+.dark {
+  --color-bg: #09090b;
+  --color-surface: #18181b;
+  --color-surface-2: #1f1f23;
+  --color-surface-3: #27272a;
+  --color-border: #3f3f46;
+  --color-border-strong: #52525b;
+  --color-ink-1: #fafafa;
+  --color-ink-2: #a1a1aa;
+  --color-ink-3: #71717a;
+
+  /* Stage palette — dark mode */
+  --color-stage-clarify-bg: #1e2a4a;
+  --color-stage-clarify-border: #1e3a8a;
+  --color-stage-impl-bg: #2a1f0a;
+  --color-stage-impl-border: #78350f;
+  --color-stage-review-bg: #1e1035;
+  --color-stage-review-border: #4c1d95;
+  --color-stage-ready-bg: #0a2a1a;
+  --color-stage-ready-border: #065f46;
+  --color-stage-done-bg: #1a1a1e;
+  --color-stage-done-border: #3f3f46;
+
+  /* Semantic — dark mode */
+  --color-danger-bg: #2a0a0a;
+  --color-danger-border: #7f1d1d;
 }
 
 /* ─────────────────────────────────────────────────────────
