@@ -931,8 +931,8 @@ export default function App() {
       setDiff(d.diff || '(no changes)')
       setDiffFiles((d.files || []).map(p => ({ path: p, explorer_prefix: d.explorer_prefix || null })))
       setDiffCommitSha(d.commitSha || '')
-    } catch {
-      setDiff('Failed to load diff')
+    } catch (e: any) {
+      setDiff(e?.message || 'Failed to load diff')
       setDiffFiles([])
     }
   }
