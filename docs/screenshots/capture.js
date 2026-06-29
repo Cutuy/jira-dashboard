@@ -30,7 +30,8 @@ const { chromium, devices } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
-const BASE = process.env.BASE_URL || 'http://localhost:3006';
+const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'config.json'), 'utf-8'));
+const BASE = process.env.BASE_URL || `http://localhost:${cfg.port || 3006}`;
 const OUT  = path.join(__dirname);
 const DESKTOP = { width: 1440, height: 900 };
 const MOBILE  = { width: 390, height: 844 };

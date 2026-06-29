@@ -107,7 +107,10 @@ case "$MODE" in
   1)  # Background — systemd
     # Pick a port. If the configured port is already listening
     # (any service, not just dashboard), auto-increment.
-    BASE_PORT=$(grep "^PORT=" "$ENV_FILE" 2>/dev/null | sed 's/^[^=]*=//' || echo "3006")
+    BASE_PORT=$(grep "^PORT=" "$ENV_FILE" 2>/dev/null | sed 's/^[^=]*=//')
+    if [ -z "$BASE_PORT" ]; then
+      BASE_PORT=$(node -e "console.log(require('./config.json').port || 3006)" 2>/dev/null || echo "3006")
+    fi
     PORT="$BASE_PORT"
     while ss -tlnp 2>/dev/null | grep -q ":${PORT}\b"; do
       PORT=$((PORT + 1))
