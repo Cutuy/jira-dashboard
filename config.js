@@ -1,9 +1,21 @@
 // config.js — unified config loader
-// Loads config.json first, then .env overrides (flat key=value format).
-// All code imports from this module; no other file reads env/paths directly.
+// Discovers <projectDir>/.jira-dashboard/.env by walking up from cwd,
+// then loads config.json on top as override. All code imports from this
+// module; no other file reads env/paths directly.
 
 const path = require('path');
 const fs = require('fs');
+
+// ── Auto-discover project root (where .jira-dashboard/ lives) ──
+function findProjectDir() {
+  let dir = process.cwd();
+  while (true) {
+    if (fs.existsSync(path.join(dir, '.jira-dashboard', '.env'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
 
 const ROOT = path.resolve(__dirname);
 
@@ -17,7 +29,11 @@ if (fs.existsSync(configPath)) {
   cfg = {};
 }
 
-// ── Load .env (flat key=value, no sections) ───────────────
+// ── Resolve project directory ─────────────────────────────
+// Priority: config.json project.path > auto-discovered > cwd
+const PROJECT_DIR = findProjectDir() || cfg.project?.path || process.cwd();
+
+// ── Load .env from <project>/.jira-dashboard/.env ─────────
 function loadEnv(filePath) {
   const vars = {};
   if (!fs.existsSync(filePath)) return vars;
@@ -37,7 +53,10 @@ function loadEnv(filePath) {
   return vars;
 }
 
-const envVars = loadEnv(path.join(ROOT, '.env'));
+const envVars = loadEnv(path.join(PROJECT_DIR, '.jira-dashboard', '.env'));
+
+// Inject into process.env so child processes (coder CLI) inherit these vars
+Object.assign(process.env, envVars);
 
 // ── Helpers ───────────────────────────────────────────────
 function env(key, fallback) {
@@ -62,7 +81,7 @@ const config = {
   },
   branchDefault: env('GIT_DEFAULT_BRANCH') || cfg.branchDefault || 'main',
   dbBusyTimeout: parseInt(env('DB_BUSY_TIMEOUT')) || cfg.dbBusyTimeout || 5000,
-  projectDir: env('JIRA_PROJECT_DIR') || cfg.project?.path || process.cwd(),
+  projectDir: env('JIRA_PROJECT_DIR') || PROJECT_DIR,
 
   // Worktrees (defaults to <projectDir>/.worktrees if not set)
   get worktreesDir() {

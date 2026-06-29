@@ -1,15 +1,14 @@
 [Unit]
-Description=Jira Dashboard (port ${PORT})
+Description=Jira Dashboard (port ${PORT}) — ${NAME}
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${ROOT}
+WorkingDirectory=${PROJECT_DIR}
 ExecStart=${NODE} ${ROOT}/server.js
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
-EnvironmentFile=${PROJECT_DIR}/.env
 
 [Install]
 WantedBy=default.target

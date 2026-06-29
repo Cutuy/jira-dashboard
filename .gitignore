@@ -7,13 +7,6 @@ node_modules/
 # Backup files
 *.bak
 
-# Environment / secrets
-.env.local
-.env.*.local
-# .env is tracked! It's the canonical local config.
-# Use .env.local for personal overrides.
-!.env.example
-
 # Editor / OS
 .vscode/
 .idea/

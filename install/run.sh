@@ -36,51 +36,45 @@ NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
 
 ok "Node.js $(node -v)  npm $(npm -v)  git $(git --version | awk '{print $3}')"
 
-# ── Step 1: .env ────────────────────────────────────────────
+# ── Step 1: Configuration ──────────────────────────────────
 step "Configuration"
 
-if [ -f .env ]; then
-  ok ".env already exists — keeping your settings"
-else
-  cp "$INSTALL_DIR/templates/env.template" .env
-  ok "Created .env from template"
-  warn "Edit .env to set JIRA_PROJECT_DIR and JIRA_CODER_BIN, then re-run bootstrap"
-  warn "  or continue now and I'll prompt you for the essentials"
-fi
+# Prompt for project directory
+default_project="${HOME}/project"
+PROJECT_DIR=$(prompt "Absolute path to your git repo [${default_project}]")
+PROJECT_DIR="${PROJECT_DIR:-$default_project}"
+PROJECT_DIR="$(cd "$PROJECT_DIR" 2>/dev/null && pwd)" || true
 
-resolve_env() {
-  local key="$1" prompt_text="$2" default="$3" current
-  current=$(grep "^${key}=" .env | sed 's/^[^=]*=//' | head -1)
-  case "$current" in
-    ""|/path/to/your/project|my-project|opencode)
-      >&2 info "Setting ${key}..."
-      val=$(prompt "$prompt_text [$default]")
-      val="${val:-$default}"
-      if grep -q "^${key}=" .env; then
-        sed -i "s|^${key}=.*|${key}=${val}|" .env
-      else
-        echo "${key}=${val}" >> .env
-      fi
-      echo "$val"
-      ;;
-    *)
-      >&2 ok "${key} already set"
-      echo "$current"
-      ;;
-  esac
-}
-
-PROJECT_DIR=$(resolve_env "JIRA_PROJECT_DIR" "Absolute path to your git repo" "$HOME/project")
-CODER_BIN=$(resolve_env "JIRA_CODER_BIN" "Path to your AI coder CLI" "opencode")
-PROJECT_NAME=$(resolve_env "JIRA_PROJECT_NAME" "Your project display name" "My Project")
-
-# Validate JIRA_PROJECT_DIR
 [ -d "$PROJECT_DIR" ] || fail "Directory does not exist: ${PROJECT_DIR}"
 [ -d "$PROJECT_DIR/.git" ] || warn "${PROJECT_DIR} is not a git repository — worktree features will fail"
 
-# Validate JIRA_CODER_BIN (warn if not found, don't block — user may install later)
+# Prompt for project display name
+default_name="$(basename "$PROJECT_DIR")"
+PROJECT_NAME=$(prompt "Project display name [${default_name}]")
+PROJECT_NAME="${PROJECT_NAME:-$default_name}"
+
+# Prompt for coder CLI path
+CODER_BIN=$(prompt "Path to your AI coder CLI binary [opencode]")
+CODER_BIN="${CODER_BIN:-opencode}"
 if [ "$CODER_BIN" != "opencode" ] && ! command -v "$CODER_BIN" >/dev/null 2>&1; then
-  warn "Coder binary '${CODER_BIN}' not found on PATH. Install it or update JIRA_CODER_BIN in .env"
+  warn "Coder binary '${CODER_BIN}' not found on PATH — you can install it later"
+fi
+
+# Write .env into project's .jira-dashboard/
+ENV_DIR="${PROJECT_DIR}/.jira-dashboard"
+mkdir -p "$ENV_DIR"
+
+if [ -f "$ENV_DIR/.env" ]; then
+  ok ".env already exists at ${ENV_DIR}/.env — keeping your settings"
+else
+  # Start from template and fill in the essentials
+  sed \
+    -e "s|/path/to/your/project|${PROJECT_DIR}|" \
+    -e "s|^JIRA_PROJECT_NAME=.*|JIRA_PROJECT_NAME=${PROJECT_NAME}|" \
+    -e "s|^JIRA_CODER_BIN=.*|JIRA_CODER_BIN=${CODER_BIN}|" \
+    "$INSTALL_DIR/templates/env.template" > "$ENV_DIR/.env"
+  ok "Created ${ENV_DIR}/.env"
+  info "Edit ${ENV_DIR}/.env to fine-tune settings, then re-run install"
 fi
 
 # ── Step 2: Dependencies ────────────────────────────────────
@@ -112,7 +106,7 @@ MODE="${MODE:-1}"
 
 case "$MODE" in
   1)  # Background — systemd
-    PORT=$(grep "^PORT=" .env | sed 's/^[^=]*=//' || echo "3006")
+    PORT=$(grep "^PORT=" "$ENV_DIR/.env" | sed 's/^[^=]*=//' || echo "3006")
     UNIT_NAME="jira-dashboard-${PORT}"
     UNIT_PATH="$HOME/.config/systemd/user/${UNIT_NAME}.service"
     SVC_TEMPLATE="$INSTALL_DIR/templates/template.service"
@@ -127,7 +121,8 @@ case "$MODE" in
       ROOT="$ROOT" \
       PORT="$PORT" \
       PROJECT_DIR="$PROJECT_DIR" \
-      envsubst '${NODE} ${ROOT} ${PORT} ${PROJECT_DIR}' < "$SVC_TEMPLATE" > "$UNIT_PATH"
+      NAME="$PROJECT_NAME" \
+      envsubst '${NODE} ${ROOT} ${PORT} ${PROJECT_DIR} ${NAME}' < "$SVC_TEMPLATE" > "$UNIT_PATH"
 
       ok "Created ${UNIT_PATH}"
     fi
@@ -141,7 +136,7 @@ case "$MODE" in
     echo ""
     info "Manage:  systemctl --user ${UNIT_NAME}.service {start|stop|restart|status}"
     info "Logs:    journalctl --user -u ${UNIT_NAME}.service -f"
-    info "Config:  edit ${ROOT}/.env then restart the service"
+    info "Config:  edit ${ENV_DIR}/.env then restart the service"
     info "Data:    ${PROJECT_DIR}/.jira-dashboard/store.db"
     ;;
 
@@ -149,7 +144,8 @@ case "$MODE" in
     echo ""
     info "Starting in foreground..."
     echo ""
-    exec node server.js
+    cd "$PROJECT_DIR"
+    exec node "$ROOT/server.js"
     ;;
 
   *)
