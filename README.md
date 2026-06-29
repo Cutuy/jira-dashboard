@@ -12,14 +12,27 @@ cd jira-dashboard
 ./bootstrap.sh
 ```
 
-The script will:
-1. Create `.env` from `.env.example` (never overwrites existing)
-2. Prompt for your project path and coder CLI if not set
-3. Install dependencies and build the client
-4. Offer **background** (systemd user service, starts on boot) or **foreground** mode
-   → default is background: `http://localhost:3006`
+The script is **interactive**. It will:
+
+1. Check prerequisites (Node.js ≥ 18, npm, git)
+2. Create `.env` from template — **never overwrites** an existing one
+3. Prompt for your project directory and coder CLI if not yet set
+4. Validate the project directory exists and is a git repo
+5. Install dependencies and build the client UI
+6. Ask: **background** (systemd user service, starts on boot) or **foreground** (this terminal)
+   → default is background, open http://localhost:3006
 
 Run it again anytime — it's idempotent and never touches your project data.
+
+### Manual setup (if you prefer)
+
+```bash
+cp install/templates/env.template .env  # create config
+# edit .env — set JIRA_PROJECT_DIR and JIRA_CODER_BIN
+npm install                              # server dependencies
+(cd client && npm install && npm run build)  # client UI
+node server.js                           # start
+```
 
 ## Configuration
 
@@ -27,7 +40,7 @@ Two files control the dashboard. Neither contains hardcoded paths:
 
 | File | Purpose |
 |---|---|
-| `.env` | **Your machine-specific overrides** — project path, coder binary, ports. Not tracked in git. See `.env.example` for all available vars. |
+| `.env` | **Your machine-specific overrides** — project path, coder binary, ports. Not tracked in git. See `install/templates/env.template` for all available vars. |
 | `config.json` | **Structural defaults** — timeouts, backend config. Tracked in git. See `config.schema.json` for full documentation. |
 
 `.env` values override `config.json` values. Every field has a sensible default —
