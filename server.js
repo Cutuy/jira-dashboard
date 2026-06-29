@@ -100,8 +100,16 @@ async function runCoder(ticketId, prompt, opts = {}) {
 
 // Capture session ID after first run
 function captureSessionId(ticketId) {
-  const backend = require('./coder');
-  const sid = backend.getStats ? null : null; // dummy guard
+  const coderMod = require('./coder');
+  // Non-opencode backends report session ID inline in their output
+  if (config.coder.type !== 'opencode') {
+    const sid = coderMod.getLastSessionId();
+    if (sid) {
+      db.updateTicketField(ticketId, 'ocode_session', sid);
+      return sid;
+    }
+    return null;
+  }
   try {
     const title = `ticket-${ticketId}`;
     const sessions = require('child_process').execSync(

@@ -11,6 +11,7 @@ const config = require('./config');
 // Shared usage store — backends without a native stats command
 // write into this after each run; getStats returns it.
 let _lastUsage = { cost: 0, input: '0', output: '0' };
+let _lastSessionId = null;
 
 // ── opencode backend ───────────────────────────────────────
 const opencodeBackend = {
@@ -85,6 +86,7 @@ const claudeBackend = {
           input: String(data.usage?.input_tokens || 0),
           output: String(data.usage?.output_tokens || 0),
         };
+        if (data.session_id) _lastSessionId = data.session_id;
         return String(data.result);
       }
     } catch {}
@@ -122,6 +124,9 @@ const codexBackend = {
       for (const line of lines) {
         try {
           const evt = JSON.parse(line);
+          if (evt.type === 'thread.started' && evt.thread_id) {
+            _lastSessionId = evt.thread_id;
+          }
           if (evt.type === 'turn.completed' && evt.usage) {
             _lastUsage = {
               cost: 0,
@@ -285,4 +290,8 @@ function startResourceMonitor(pid, onProgress) {
   return { interval, peakMem: () => peakMem };
 }
 
-module.exports = { run, getStats, startResourceMonitor };
+function getLastSessionId() {
+  return _lastSessionId;
+}
+
+module.exports = { run, getStats, getLastSessionId, startResourceMonitor };
