@@ -956,8 +956,8 @@ app.get('/api/tickets/:id/diff', (req, res) => {
       diff = runGit(`diff ${config.branchDefault}...HEAD --stat`, ticket.worktree_path);
       if (diff) {
         try {
-          const nameOnly = runGit(`diff --name-only --diff-filter=ACMRT ${config.branchDefault}...HEAD`, ticket.worktree_path);
-          files = nameOnly.split('\n').map(s => s.trim()).filter(Boolean);
+          const nameOnly = runGit(`log ${config.branchDefault}...HEAD --name-only --format=""`, ticket.worktree_path);
+          files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
         } catch {}
         diff = `(commits already in ${config.branchDefault} — showing diff from merge-base)\n${diff}`;
       } else {
@@ -965,8 +965,8 @@ app.get('/api/tickets/:id/diff', (req, res) => {
       }
     } else {
       try {
-        const nameOnly = runGit(`diff --name-only --diff-filter=ACMRT ${config.branchDefault}..HEAD`, ticket.worktree_path);
-        files = nameOnly.split('\n').map(s => s.trim()).filter(Boolean);
+        const nameOnly = runGit(`log ${config.branchDefault}..HEAD --name-only --format=""`, ticket.worktree_path);
+        files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
       } catch {}
     }
     const homeDir = os.homedir();
