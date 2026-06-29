@@ -9,20 +9,17 @@ single-page app. No database servers, no cloud accounts.
 ```bash
 git clone <this-repo>
 cd jira-dashboard
-
-# 1. Point at YOUR project
-cp .env.example .env
-# Edit .env — at minimum set JIRA_PROJECT_DIR and JIRA_CODER_BIN
-
-# 2. Install & build
-npm install
-cd client && npm install && npm run build && cd ..
-
-# 3. Start
-npm start
+./bootstrap.sh
 ```
 
-Open http://localhost:3006.
+The script will:
+1. Create `.env` from `.env.example` (never overwrites existing)
+2. Prompt for your project path and coder CLI if not set
+3. Install dependencies and build the client
+4. Offer **background** (systemd user service, starts on boot) or **foreground** mode
+   → default is background: `http://localhost:3006`
+
+Run it again anytime — it's idempotent and never touches your project data.
 
 ## Configuration
 
