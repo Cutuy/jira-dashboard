@@ -6,7 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 
-// ── Auto-discover project root (where .jira-dashboard/ lives) ──
+// ── Auto-discover project root (where .jira-dashboard/.env lives) ──
 function findProjectDir() {
   let dir = process.cwd();
   while (true) {
@@ -30,10 +30,10 @@ if (fs.existsSync(configPath)) {
 }
 
 // ── Resolve project directory ─────────────────────────────
-// Priority: config.json project.path > auto-discovered > cwd
+// Priority: auto-discovered (.jira-dashboard/.env) > config.json project.path > cwd
 const PROJECT_DIR = findProjectDir() || cfg.project?.path || process.cwd();
 
-// ── Load .env from <project>/.jira-dashboard/.env ─────────
+// ── .env loader ────────────────────────────────────────────
 function loadEnv(filePath) {
   const vars = {};
   if (!fs.existsSync(filePath)) return vars;
@@ -53,10 +53,20 @@ function loadEnv(filePath) {
   return vars;
 }
 
-const envVars = loadEnv(path.join(PROJECT_DIR, '.jira-dashboard', '.env'));
+// Dashboard config from <project>/.jira-dashboard/.env
+const dashEnvPath = path.join(PROJECT_DIR, '.jira-dashboard', '.env');
+const envVars = loadEnv(dashEnvPath);
 
-// Inject into process.env so child processes (coder CLI) inherit these vars
-Object.assign(process.env, envVars);
+if (!fs.existsSync(dashEnvPath)) {
+  console.warn(`No dashboard .env at ${dashEnvPath} — using defaults. Run install/run.sh.`);
+}
+
+// Project environment from <project>/.env — injected into process.env
+// so child processes (coder CLI, test runner) inherit API keys, venv, PATH, etc.
+const projectEnvPath = path.join(PROJECT_DIR, '.env');
+if (fs.existsSync(projectEnvPath)) {
+  Object.assign(process.env, loadEnv(projectEnvPath));
+}
 
 // ── Helpers ───────────────────────────────────────────────
 function env(key, fallback) {
@@ -112,8 +122,9 @@ const config = {
   // Close / merge strategy
   mergeStrategy: env('MERGE_STRATEGY') || cfg.mergeStrategy || 'cherry-pick',
 
-  // Test runner
+  // Test runner (opt-in, default off)
   test: {
+    enabled: env('JIRA_TEST_ENABLED') === 'true' || cfg.test?.enabled || false,
     commandOverride: env('JIRA_TEST_CMD') || cfg.test?.command_override || null,
     timeout: parseInt(env('JIRA_TEST_TIMEOUT')) || cfg.test?.timeout || 300_000,
   },

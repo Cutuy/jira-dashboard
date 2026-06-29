@@ -658,7 +658,7 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
-interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string } }
+interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean }
 
 export default function App() {
   const [tickets, setTickets] = useState<T[]>([])
@@ -672,7 +672,7 @@ export default function App() {
   const [feedback, setFeedback] = useState('')
   const [out, setOut] = useState({ open: false, title: '', text: '', status: '' })
   const [suggestions, setSuggestions] = useState<Sug[]>([])
-  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' } })
+  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' }, testEnabled: false })
   const [diff, setDiff] = useState('')
   const [diffFiles, setDiffFiles] = useState<{ path: string; explorer_prefix: string | null }[]>([])
   const [diffCommitSha, setDiffCommitSha] = useState('')
@@ -1012,10 +1012,12 @@ export default function App() {
             <span className="t-small text-zinc-500 hidden sm:inline truncate">Project tickets</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Btn variant="outline" size="sm" onClick={runTest} aria-label="Run Tests">
-              <Play className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Run Tests</span>
-            </Btn>
+            {cfg.testEnabled && (
+              <Btn variant="outline" size="sm" onClick={runTest} aria-label="Run Tests">
+                <Play className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Run Tests</span>
+              </Btn>
+            )}
             <Btn variant="outline" size="sm" onClick={runPrepush} aria-label="Pre-push check">
               <Shield className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Pre-push</span>

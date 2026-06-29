@@ -145,6 +145,7 @@ try {
       assert.strictEqual(cfg.branchDefault, 'main', 'branchDefault should default to main');
       assert.strictEqual(cfg.dbBusyTimeout, 5000, 'dbBusyTimeout should default to 5000');
       assert.strictEqual(cfg.mergeStrategy, 'cherry-pick', 'mergeStrategy should default to cherry-pick');
+      assert.strictEqual(cfg.test.enabled, false, 'test.enabled should default to false');
       assert.strictEqual(cfg.projectName, 'My Project', 'projectName should come from config.json');
       console.log('PASS: new config fields have correct defaults');
     });
@@ -164,6 +165,7 @@ try {
       'DB_BUSY_TIMEOUT=9999',
       'JIRA_PROJECT_NAME=EnvProject',
       'JIRA_PROJECT_DIR=/env/path',
+      'JIRA_TEST_ENABLED=true',
       'JIRA_TEST_TIMEOUT=123456',
     ].join('\n'), () => {
       const cfg = reloadConfig();
@@ -176,8 +178,9 @@ try {
       assert.strictEqual(cfg.dbBusyTimeout, 9999, 'dbBusyTimeout should be overridden by .env');
       assert.strictEqual(cfg.projectName, 'EnvProject', 'projectName should be overridden by .env');
       assert.strictEqual(cfg.projectDir, '/env/path', 'projectDir should be overridden by .env');
-      assert.strictEqual(cfg.test.timeout, 123456, 'test.timeout should be overridden by .env');
-      console.log('PASS: env vars override config defaults');
+    assert.strictEqual(cfg.test.enabled, true, 'test.enabled should be overridden by .env');
+    assert.strictEqual(cfg.test.timeout, 123456, 'test.timeout should be overridden by .env');
+    console.log('PASS: env vars override config defaults');
     });
   });
 })();

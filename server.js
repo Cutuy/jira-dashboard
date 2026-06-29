@@ -371,6 +371,7 @@ app.get('/api/config', (req, res) => {
     projectName: config.projectName,
     remoteHost: config.remoteHost,
     explorer: config.explorer,
+    testEnabled: config.test.enabled,
   });
 });
 
