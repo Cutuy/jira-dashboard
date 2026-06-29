@@ -3,18 +3,15 @@ node_modules/
 
 # Runtime logs (test/prepush output)
 *.log
-data/*.log
 
 # Backup files
-data/*.backup
 *.bak
 
-# SQLite runtime database (binary; rebuilt from schema + seed on
-# first run if missing).  data/store.json.migrated IS tracked:
-# it's the canonical JSON source of truth that can rebuild the DB.
+# Per-instance data directories
 data/store.db
 data/store.db-shm
 data/store.db-wal
+data*/
 
 # Environment / secrets
 .env.local
@@ -31,9 +28,6 @@ data/store.db-wal
 *~
 .DS_Store
 Thumbs.db
-
-# Per-instance data directories
-data-3007/
 
 # Build artifacts
 public-spa/assets/

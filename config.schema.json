@@ -9,11 +9,6 @@
       "type": "integer",
       "default": 3006
     },
-    "data_dir": {
-      "description": "Directory for SQLite database and runtime files, relative to dashboard root.",
-      "type": "string",
-      "default": "data"
-    },
     "project": {
       "type": "object",
       "properties": {

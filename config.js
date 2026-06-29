@@ -48,7 +48,9 @@ function env(key, fallback) {
 const config = {
   // Server
   port: parseInt(env('PORT')) || cfg.port || 3006,
-  dataDir: path.resolve(env('JIRA_DATA_DIR') || path.join(ROOT, cfg.data_dir || 'data')),
+  get dataDir() {
+    return path.resolve(env('JIRA_DATA_DIR') || path.join(this.projectDir, '.jira-dashboard'));
+  },
 
   // Project
   projectName: env('JIRA_PROJECT_NAME') || cfg.project?.name || 'project',

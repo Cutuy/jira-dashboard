@@ -1,7 +1,6 @@
 {
   "$schema": "./config.schema.json",
   "port": 3006,
-  "data_dir": "data",
   "project": {
     "name": "My Project",
     "path": "/path/to/your/project"
