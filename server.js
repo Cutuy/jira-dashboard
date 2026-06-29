@@ -101,31 +101,11 @@ async function runCoder(ticketId, prompt, opts = {}) {
 // Capture session ID after first run
 function captureSessionId(ticketId) {
   const coderMod = require('./coder');
-  // Non-opencode backends report session ID inline in their output
-  if (config.coder.type !== 'opencode') {
-    const sid = coderMod.getLastSessionId();
-    if (sid) {
-      db.updateTicketField(ticketId, 'ocode_session', sid);
-      return sid;
-    }
-    return null;
+  const sid = coderMod.getLastSessionId();
+  if (sid) {
+    db.updateTicketField(ticketId, 'ocode_session', sid);
+    return sid;
   }
-  try {
-    const title = `ticket-${ticketId}`;
-    const sessions = require('child_process').execSync(
-      `${config.coder.bin} session list`,
-      { encoding: 'utf-8', timeout: config.coder.timeouts.command, stdio: 'pipe' }
-    );
-    for (const line of sessions.split('\n')) {
-      if (line.includes(title)) {
-        const sid = line.trim().split(/\s+/)[0];
-        if (sid.startsWith('ses_')) {
-          db.updateTicketField(ticketId, 'ocode_session', sid);
-          return sid;
-        }
-      }
-    }
-  } catch { /* best-effort */ }
   return null;
 }
 

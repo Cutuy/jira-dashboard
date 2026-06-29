@@ -35,7 +35,7 @@ const opencodeBackend = {
   },
 
   buildArgs(prompt, sessionId, title) {
-    const args = ['run'];
+    const args = ['run', '--format', 'json'];
     if (sessionId) {
       args.push('-s', sessionId);
     } else if (title) {
@@ -51,6 +51,33 @@ const opencodeBackend = {
       PATH: `${config.venvBin()}:${process.env.PATH}`,
       VIRTUAL_ENV: path.join(config.projectDir, config.venv.dir),
     };
+  },
+
+  parseOutput(stdout) {
+    try {
+      const lines = stdout.trim().split('\n');
+      let text = '';
+      for (const line of lines) {
+        try {
+          const evt = JSON.parse(line);
+          if (evt.type === 'step_start' && evt.sessionID) {
+            _lastSessionId = evt.sessionID;
+          }
+          if (evt.type === 'step_finish' && evt.part?.tokens) {
+            _lastUsage = {
+              cost: evt.part.cost || 0,
+              input: String(evt.part.tokens.input || 0),
+              output: String(evt.part.tokens.output || 0),
+            };
+          }
+          if (evt.type === 'text' && evt.part?.type === 'text') {
+            text += evt.part.text || '';
+          }
+        } catch {}
+      }
+      if (text) return text;
+    } catch {}
+    return stdout;
   },
 };
 
