@@ -721,6 +721,23 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
 
     clearInterval(fileMonitor);
 
+    // Check if the coder actually committed; if not, re-run with a commit-only prompt
+    let hasUncommitted = false;
+    try {
+      runGit(`diff --quiet`, worktreePath);
+    } catch { hasUncommitted = true; }
+    try {
+      runGit(`diff --cached --quiet`, worktreePath);
+    } catch { hasUncommitted = true; }
+    if (hasUncommitted) {
+      db.logActivity(ticket.id, 'commit_retry', 'Coder did not commit — asking again');
+      const commitPrompt = `You implemented changes for this ticket but did not commit them. Review the working directory and commit ALL changes with clear, descriptive messages. Use 'git add' and 'git commit' to create well-structured commits. Do NOT make any new changes — only commit what exists.`;
+      await runCoder(ticket.id, commitPrompt, {
+        timeout: config.coder.timeouts.command,
+        onProgress,
+      });
+    }
+
     const commitSha = commitWorktreeChanges(worktreePath, ticket.id, `${ticket.id}: implement`);
 
     let diffSummary = '';
@@ -931,11 +948,11 @@ app.get('/api/tickets/:id/diff', (req, res) => {
     return res.json({ diff: '(no worktree available)', files: [], explorer_prefix: null });
   }
   try {
-    let diff = runGit(`log ${config.branchDefault}..HEAD --oneline --stat`, ticket.worktree_path);
-    let files = [];
+    const diff = runGit(`log ${config.branchDefault}..HEAD --oneline --stat`, ticket.worktree_path);
     if (!diff) {
-      diff = runGit(`diff ${config.branchDefault}..HEAD --stat`, ticket.worktree_path);
+      return res.status(400).json({ error: 'No commits ahead of default branch — nothing to diff. Did the coder commit?', files: [], explorer_prefix: null });
     }
+    let files = [];
     try {
       const nameOnly = runGit(`diff --name-only --diff-filter=ACMRT ${config.branchDefault}..HEAD`, ticket.worktree_path);
       files = nameOnly.split('\n').map(s => s.trim()).filter(Boolean);
@@ -944,7 +961,7 @@ app.get('/api/tickets/:id/diff', (req, res) => {
     const explorerPrefix = ticket.worktree_path.startsWith(homeDir + '/')
       ? ticket.worktree_path.slice(homeDir.length + 1)
       : ticket.worktree_path;
-    res.json({ diff: diff || '(no changes)', files, explorer_prefix: explorerPrefix, commitSha: ticket.commit_sha });
+    res.json({ diff, files, explorer_prefix: explorerPrefix, commitSha: ticket.commit_sha });
   } catch (err) {
     res.json({ diff: `Error: ${err.message}`, files: [], explorer_prefix: null });
   }
