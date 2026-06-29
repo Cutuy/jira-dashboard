@@ -1,133 +1,132 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 700" font-family="system-ui, -apple-system, sans-serif">
   <defs>
-    <linearGradient id="db" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1f2937"/>
-      <stop offset="100%" stop-color="#111827"/>
-    </linearGradient>
-    <linearGradient id="repo" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2563eb"/>
-      <stop offset="100%" stop-color="#1d4ed8"/>
-    </linearGradient>
-    <linearGradient id="ticket" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#059669"/>
-      <stop offset="100%" stop-color="#047857"/>
-    </linearGradient>
-    <linearGradient id="worktree" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#7c3aed"/>
-      <stop offset="100%" stop-color="#6d28d9"/>
-    </linearGradient>
+    <filter id="s1" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+    <filter id="s2" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.06"/>
+    </filter>
   </defs>
 
   <!-- Background -->
-  <rect width="900" height="700" fill="#f8fafc" rx="8"/>
+  <rect width="900" height="700" fill="#fcfcfd" rx="10"/>
 
   <!-- Title -->
-  <text x="450" y="36" text-anchor="middle" font-size="18" font-weight="700" fill="#18181b">Isolation Architecture</text>
-  <text x="450" y="56" text-anchor="middle" font-size="12" fill="#52525b">Every process runs with the repo as cwd, inheriting that repo's .venv and .env</text>
+  <text x="450" y="34" text-anchor="middle" font-size="16" font-weight="600" fill="#18181b" letter-spacing="-0.01">Isolation Architecture</text>
+  <text x="450" y="52" text-anchor="middle" font-size="11" fill="#71717a">Every process runs with the repo as cwd, inheriting that repo's .venv and .env</text>
 
-  <!-- Layer 1: Dashboard -->
-  <rect x="30" y="80" width="840" height="70" rx="6" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1.5"/>
-  <text x="50" y="108" font-size="13" font-weight="600" fill="#18181b">Dashboard</text>
-  <text x="50" y="126" font-size="11" fill="#52525b">server.js — Express, SSE streaming, SQLite store</text>
-  <text x="50" y="142" font-size="11" fill="#52525b">config loaded from &lt;project&gt;/.jira-dashboard/.env + &lt;project&gt;/.env</text>
+  <!-- Dashboard layer -->
+  <rect x="30" y="76" width="840" height="56" rx="8" fill="#f4f4f5" stroke="#e4e4e7" stroke-width="1" filter="url(#s1)"/>
+  <text x="46" y="100" font-size="12" font-weight="600" fill="#18181b">Dashboard</text>
+  <text x="46" y="117" font-size="10" fill="#52525b">server.js — Express, SSE streaming, SQLite at &lt;project&gt;/.jira-dashboard/store.db</text>
+  <text x="46" y="128" font-size="10" fill="#52525b">Config from &lt;project&gt;/.jira-dashboard/.env + &lt;project&gt;/.env</text>
 
-  <!-- Layer 2: Repo A -->
-  <rect x="30" y="180" width="400" height="490" rx="6" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
-  <rect x="30" y="180" width="400" height="36" rx="6" fill="url(#repo)"/>
-  <rect x="30" y="204" width="400" height="12" fill="url(#repo)"/>
-  <text x="220" y="202" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">Git Repo A  —  /home/user/project-a</text>
+  <!-- Repo A container -->
+  <rect x="30" y="156" width="410" height="530" rx="10" fill="#f0f4ff" stroke="#c7d7fe" stroke-width="1" filter="url(#s1)"/>
+  <rect x="30" y="156" width="410" height="36" rx="10" fill="#2563eb"/>
+  <rect x="30" y="182" width="410" height="10" fill="#2563eb"/>
+  <text x="235" y="178" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Git Repo A  —  /home/user/project-a</text>
 
-  <!-- Repo A env -->
-  <rect x="45" y="226" width="370" height="36" rx="4" fill="#bfdbfe" stroke="#93c5fd" stroke-width="1"/>
-  <text x="55" y="244" font-size="11" font-weight="500" fill="#1e40af">.env</text>
-  <text x="55" y="258" font-size="10" fill="#475569">DEEPSEEK_API_KEY=sk-...  VIRTUAL_ENV=project-a/.venv</text>
+  <!-- Repo A env row -->
+  <rect x="44" y="204" width="382" height="30" rx="6" fill="#dbeafe" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="54" y="220" font-size="10" font-weight="500" fill="#1d4ed8">.env</text>
+  <text x="80" y="220" font-size="9" fill="#475569">DEEPSEEK_API_KEY=sk-...  VIRTUAL_ENV=project-a/.venv</text>
 
-  <!-- Repo A .venv -->
-  <rect x="45" y="272" width="370" height="36" rx="4" fill="#bfdbfe" stroke="#93c5fd" stroke-width="1"/>
-  <text x="55" y="290" font-size="11" font-weight="500" fill="#1e40af">.venv (or node_modules, vendor, etc.)</text>
-  <text x="55" y="304" font-size="10" fill="#475569">python3, node, cargo — whatever the project needs</text>
+  <!-- Repo A dependencies row -->
+  <rect x="44" y="242" width="382" height="30" rx="6" fill="#f0f0ff" stroke="#c7d2fe" stroke-width="1"/>
+  <text x="54" y="258" font-size="10" font-weight="500" fill="#4338ca">.venv</text>
+  <text x="80" y="258" font-size="9" fill="#475569">python3, pip, pytest, mypy — whatever the project needs</text>
 
-  <!-- Repo A Ticket 1 -->
-  <rect x="45" y="328" width="370" height="130" rx="4" fill="#d1fae5" stroke="#6ee7b7" stroke-width="1"/>
-  <rect x="45" y="328" width="370" height="24" rx="4" fill="url(#ticket)"/>
-  <rect x="45" y="346" width="370" height="6" fill="url(#ticket)"/>
-  <text x="220" y="344" text-anchor="middle" font-size="11" font-weight="600" fill="#ffffff">Ticket: add-s3-storage-a1b2c3</text>
+  <!-- Ticket 1 -->
+  <rect x="44" y="286" width="382" height="118" rx="8" fill="#fff" stroke="#d1fae5" stroke-width="1" filter="url(#s2)"/>
+  
+  <!-- Ticket header -->
+  <rect x="44" y="286" width="382" height="26" rx="8" fill="#ecfdf5"/>
+  <rect x="44" y="308" width="382" height="4" fill="#ecfdf5"/>
+  <text x="235" y="303" text-anchor="middle" font-size="10" font-weight="600" fill="#065f46">Ticket: add-s3-storage-a1b2c3</text>
 
-  <rect x="55" y="362" width="160" height="50" rx="4" fill="url(#worktree)"/>
-  <text x="135" y="380" text-anchor="middle" font-size="10" font-weight="600" fill="#ffffff">Worktree</text>
-  <text x="135" y="395" text-anchor="middle" font-size="9" fill="#ddd6fe">.worktrees/a1b2c3/</text>
-  <text x="135" y="407" text-anchor="middle" font-size="9" fill="#ddd6fe">branch: feature/s3-storage</text>
+  <!-- Worktree box -->
+  <rect x="54" y="320" width="170" height="40" rx="6" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1"/>
+  <text x="139" y="337" text-anchor="middle" font-size="10" font-weight="500" fill="#5b21b6">Worktree</text>
+  <text x="139" y="350" text-anchor="middle" font-size="8" fill="#7c3aed">.worktrees/a1b2c3</text>
 
-  <rect x="230" y="362" width="170" height="50" rx="4" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-  <text x="315" y="380" text-anchor="middle" font-size="10" font-weight="600" fill="#92400e">Coder Session</text>
-  <text x="315" y="395" text-anchor="middle" font-size="9" fill="#92400e">ses_a1b2c3d4e5f6</text>
-  <text x="315" y="407" text-anchor="middle" font-size="9" fill="#92400e">context: tickets/a1b2c3/context.md</text>
+  <!-- Session box -->
+  <rect x="238" y="320" width="178" height="40" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+  <text x="327" y="337" text-anchor="middle" font-size="10" font-weight="500" fill="#9a3412">Coder Session</text>
+  <text x="327" y="350" text-anchor="middle" font-size="8" fill="#c2410c">ses_a1b2c3d4e5f6</text>
 
-  <text x="55" y="430" font-size="10" fill="#475569">cwd = project-a git worktree · inherits project-a .venv &amp; .env</text>
-  <text x="55" y="444" font-size="10" fill="#475569">opencode run -s ses_a1b2c3 ...</text>
+  <!-- Ticket footnotes -->
+  <text x="54" y="382" font-size="9" fill="#52525b">cwd = project-a worktree · session isolated from other tickets</text>
+  <text x="54" y="394" font-size="9" fill="#52525b">opencode run -s ses_a1b2c3 —title ticket-a1b2c3</text>
 
-  <!-- Repo A Ticket 2 -->
-  <rect x="45" y="478" width="370" height="130" rx="4" fill="#d1fae5" stroke="#6ee7b7" stroke-width="1"/>
-  <rect x="45" y="478" width="370" height="24" rx="4" fill="url(#ticket)"/>
-  <rect x="45" y="496" width="370" height="6" fill="url(#ticket)"/>
-  <text x="220" y="494" text-anchor="middle" font-size="11" font-weight="600" fill="#ffffff">Ticket: fix-login-bug-d4e5f6</text>
+  <!-- Ticket 2 -->
+  <rect x="44" y="416" width="382" height="118" rx="8" fill="#fff" stroke="#d1fae5" stroke-width="1" filter="url(#s2)"/>
+  
+  <rect x="44" y="416" width="382" height="26" rx="8" fill="#ecfdf5"/>
+  <rect x="44" y="438" width="382" height="4" fill="#ecfdf5"/>
+  <text x="235" y="433" text-anchor="middle" font-size="10" font-weight="600" fill="#065f46">Ticket: fix-login-bug-d4e5f6</text>
 
-  <rect x="55" y="512" width="160" height="50" rx="4" fill="url(#worktree)"/>
-  <text x="135" y="530" text-anchor="middle" font-size="10" font-weight="600" fill="#ffffff">Worktree</text>
-  <text x="135" y="545" text-anchor="middle" font-size="9" fill="#ddd6fe">.worktrees/d4e5f6/</text>
-  <text x="135" y="557" text-anchor="middle" font-size="9" fill="#ddd6fe">branch: feature/login-fix</text>
+  <rect x="54" y="450" width="170" height="40" rx="6" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1"/>
+  <text x="139" y="467" text-anchor="middle" font-size="10" font-weight="500" fill="#5b21b6">Worktree</text>
+  <text x="139" y="480" text-anchor="middle" font-size="8" fill="#7c3aed">.worktrees/d4e5f6</text>
 
-  <rect x="230" y="512" width="170" height="50" rx="4" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-  <text x="315" y="530" text-anchor="middle" font-size="10" font-weight="600" fill="#92400e">Coder Session</text>
-  <text x="315" y="545" text-anchor="middle" font-size="9" fill="#92400e">ses_d4e5f6g7h8i9</text>
-  <text x="315" y="557" text-anchor="middle" font-size="9" fill="#92400e">context: tickets/d4e5f6/context.md</text>
+  <rect x="238" y="450" width="178" height="40" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+  <text x="327" y="467" text-anchor="middle" font-size="10" font-weight="500" fill="#9a3412">Coder Session</text>
+  <text x="327" y="480" text-anchor="middle" font-size="8" fill="#c2410c">ses_d4e5f6g7h8i9</text>
 
-  <text x="55" y="580" font-size="10" fill="#475569">cwd = project-a worktree · isolated session, isolated branch</text>
-  <text x="55" y="594" font-size="10" fill="#475569">opencode run -s ses_d4e5f6 ...</text>
+  <text x="54" y="512" font-size="9" fill="#52525b">cwd = project-a worktree · isolated session, isolated branch</text>
+  <text x="54" y="524" font-size="9" fill="#52525b">opencode run -s ses_d4e5f6 —title ticket-d4e5f6</text>
 
-  <!-- Layer 3: Repo B -->
-  <rect x="470" y="180" width="400" height="490" rx="6" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
-  <rect x="470" y="180" width="400" height="36" rx="6" fill="url(#repo)"/>
-  <rect x="470" y="204" width="400" height="12" fill="url(#repo)"/>
-  <text x="660" y="202" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">Git Repo B  —  /home/user/project-b</text>
+  <!-- Per-repo data note -->
+  <rect x="44" y="550" width="382" height="24" rx="6" fill="#fafafa" stroke="#e4e4e7" stroke-width="1"/>
+  <text x="54" y="565" font-size="9" fill="#52525b">Data: project-a/.jira-dashboard/store.db (SQLite, isolated per repo)</text>
 
-  <!-- Repo B env -->
-  <rect x="485" y="226" width="370" height="36" rx="4" fill="#bfdbfe" stroke="#93c5fd" stroke-width="1"/>
-  <text x="495" y="244" font-size="11" font-weight="500" fill="#1e40af">.env</text>
-  <text x="495" y="258" font-size="10" fill="#475569">OPENAI_API_KEY=sk-...  PATH=./node_modules/.bin</text>
+  <!-- Repo B container -->
+  <rect x="460" y="156" width="410" height="530" rx="10" fill="#f0f4ff" stroke="#c7d7fe" stroke-width="1" filter="url(#s1)"/>
+  <rect x="460" y="156" width="410" height="36" rx="10" fill="#2563eb"/>
+  <rect x="460" y="182" width="410" height="10" fill="#2563eb"/>
+  <text x="665" y="178" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Git Repo B  —  /home/user/project-b</text>
 
-  <!-- Repo B .venv -->
-  <rect x="485" y="272" width="370" height="36" rx="4" fill="#bfdbfe" stroke="#93c5fd" stroke-width="1"/>
-  <text x="495" y="290" font-size="11" font-weight="500" fill="#1e40af">node_modules (no Python venv)</text>
-  <text x="495" y="304" font-size="10" fill="#475569">Different project, different toolchain, no assumptions</text>
+  <rect x="474" y="204" width="382" height="30" rx="6" fill="#dbeafe" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="484" y="220" font-size="10" font-weight="500" fill="#1d4ed8">.env</text>
+  <text x="510" y="220" font-size="9" fill="#475569">OPENAI_API_KEY=sk-...  PATH=./node_modules/.bin</text>
 
-  <!-- Repo B Ticket -->
-  <rect x="485" y="328" width="370" height="130" rx="4" fill="#d1fae5" stroke="#6ee7b7" stroke-width="1"/>
-  <rect x="485" y="328" width="370" height="24" rx="4" fill="url(#ticket)"/>
-  <rect x="485" y="346" width="370" height="6" fill="url(#ticket)"/>
-  <text x="660" y="344" text-anchor="middle" font-size="11" font-weight="600" fill="#ffffff">Ticket: add-api-endpoint-g7h8i9</text>
+  <rect x="474" y="242" width="382" height="30" rx="6" fill="#f0f0ff" stroke="#c7d2fe" stroke-width="1"/>
+  <text x="484" y="258" font-size="10" font-weight="500" fill="#4338ca">node_modules</text>
+  <text x="510" y="258" font-size="9" fill="#475569">TypeScript, React, vite — no Python, no assumptions</text>
 
-  <rect x="495" y="362" width="160" height="50" rx="4" fill="url(#worktree)"/>
-  <text x="575" y="380" text-anchor="middle" font-size="10" font-weight="600" fill="#ffffff">Worktree</text>
-  <text x="575" y="395" text-anchor="middle" font-size="9" fill="#ddd6fe">.worktrees/g7h8i9/</text>
-  <text x="575" y="407" text-anchor="middle" font-size="9" fill="#ddd6fe">branch: feature/api-endpoint</text>
+  <!-- Ticket 3 (Repo B) -->
+  <rect x="474" y="286" width="382" height="118" rx="8" fill="#fff" stroke="#d1fae5" stroke-width="1" filter="url(#s2)"/>
+  
+  <rect x="474" y="286" width="382" height="26" rx="8" fill="#ecfdf5"/>
+  <rect x="474" y="308" width="382" height="4" fill="#ecfdf5"/>
+  <text x="665" y="303" text-anchor="middle" font-size="10" font-weight="600" fill="#065f46">Ticket: add-api-endpoint-g7h8i9</text>
 
-  <rect x="670" y="362" width="170" height="50" rx="4" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-  <text x="755" y="380" text-anchor="middle" font-size="10" font-weight="600" fill="#92400e">Coder Session</text>
-  <text x="755" y="395" text-anchor="middle" font-size="9" fill="#92400e">ses_g7h8i9j0k1l2</text>
-  <text x="755" y="407" text-anchor="middle" font-size="9" fill="#92400e">context: tickets/g7h8i9/context.md</text>
+  <rect x="484" y="320" width="170" height="40" rx="6" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1"/>
+  <text x="569" y="337" text-anchor="middle" font-size="10" font-weight="500" fill="#5b21b6">Worktree</text>
+  <text x="569" y="350" text-anchor="middle" font-size="8" fill="#7c3aed">.worktrees/g7h8i9</text>
 
-  <text x="495" y="430" font-size="10" fill="#475569">cwd = project-b worktree · inherits project-b node_modules</text>
+  <rect x="668" y="320" width="178" height="40" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+  <text x="757" y="337" text-anchor="middle" font-size="10" font-weight="500" fill="#9a3412">Coder Session</text>
+  <text x="757" y="350" text-anchor="middle" font-size="8" fill="#c2410c">ses_g7h8i9j0k1l2</text>
+
+  <text x="484" y="382" font-size="9" fill="#52525b">cwd = project-b worktree · inherits project-b node_modules</text>
+  <text x="484" y="394" font-size="9" fill="#52525b">opencode run -s ses_g7h8i9 —title ticket-g7h8i9</text>
+
+  <!-- Per-repo data note B -->
+  <rect x="474" y="550" width="382" height="24" rx="6" fill="#fafafa" stroke="#e4e4e7" stroke-width="1"/>
+  <text x="484" y="565" font-size="9" fill="#52525b">Data: project-b/.jira-dashboard/store.db (SQLite, isolated per repo)</text>
 
   <!-- Legend -->
-  <rect x="485" y="530" width="370" height="110" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
-  <text x="505" y="552" font-size="11" font-weight="600" fill="#18181b">Legend</text>
-  <rect x="505" y="564" width="12" height="12" rx="2" fill="url(#repo)"/>
-  <text x="525" y="575" font-size="10" fill="#475569">Git repo — isolated cwd, inherits its own .venv &amp; .env</text>
-  <rect x="505" y="584" width="12" height="12" rx="2" fill="url(#ticket)"/>
-  <text x="525" y="595" font-size="10" fill="#475569">Ticket — unique coder session, unique git worktree</text>
-  <rect x="505" y="604" width="12" height="12" rx="2" fill="url(#worktree)"/>
-  <text x="525" y="615" font-size="10" fill="#475569">Worktree — isolated filesystem, isolated branch</text>
-  <rect x="505" y="624" width="12" height="12" rx="2" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-  <text x="525" y="635" font-size="10" fill="#475569">Coder session — private LLM context, no cross-ticket leakage</text>
+  <rect x="474" y="590" width="382" height="86" rx="8" fill="#fafafa" stroke="#e4e4e7" stroke-width="1"/>
+  <text x="494" y="610" font-size="10" font-weight="600" fill="#18181b">Legend</text>
+
+  <rect x="494" y="620" width="10" height="10" rx="2" fill="#2563eb"/>
+  <text x="512" y="629" font-size="9" fill="#52525b">Git repo — isolated cwd, inherits its own .venv &amp; .env</text>
+
+  <rect x="494" y="636" width="10" height="10" rx="2" fill="#5b21b6"/>
+  <text x="512" y="645" font-size="9" fill="#52525b">Worktree — isolated filesystem per ticket, isolated branch</text>
+
+  <rect x="494" y="652" width="10" height="10" rx="2" fill="#c2410c"/>
+  <text x="512" y="661" font-size="9" fill="#52525b">Coder session — private LLM context, no cross-ticket leakage</text>
 </svg>
