@@ -89,56 +89,55 @@
   <text x="1020" y="358" font-size="9" fill="#71717a" font-family="ui-monospace, SFMono-Regular, monospace" text-anchor="end">ses_m4n5o6</text>
 
   <!-- ============ SECTION 2: LIFECYCLE ============ -->
-  <text x="40" y="458" font-size="12" font-weight="600" fill="#18181b">2. Ticket lifecycle</text>
-  <text x="170" y="458" font-size="10" fill="#71717a">— four stages, one feedback loop</text>
+  <text x="40" y="455" font-size="12" font-weight="600" fill="#18181b">2. Ticket lifecycle</text>
 
   <!-- Stage 1: Clarification (blue) -->
-  <rect x="40" y="480" width="240" height="130" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
-  <circle cx="62" cy="502" r="4" fill="#3b82f6"/>
-  <text x="74" y="506" font-size="12" font-weight="600" fill="#1d4ed8">Clarification</text>
-  <line x1="60" y1="516" x2="260" y2="516" stroke="#bfdbfe" stroke-width="1"/>
-  <text x="60" y="538" font-size="10" fill="#52525b">AI asks focused questions;</text>
-  <text x="60" y="554" font-size="10" fill="#52525b">you answer, multi-round.</text>
-  <text x="60" y="586" font-size="9" fill="#1d4ed8" font-style="italic">no worktree yet</text>
+  <rect x="40" y="490" width="240" height="120" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+  <circle cx="62" cy="512" r="4" fill="#3b82f6"/>
+  <text x="74" y="516" font-size="12" font-weight="600" fill="#1d4ed8">Clarification</text>
+  <line x1="60" y1="526" x2="260" y2="526" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="60" y="548" font-size="10" fill="#52525b">AI asks focused questions;</text>
+  <text x="60" y="564" font-size="10" fill="#52525b">you answer, multi-round.</text>
+  <text x="60" y="592" font-size="9" fill="#1d4ed8" font-style="italic">no worktree yet</text>
 
   <!-- Stage 2: Implementation (amber) -->
-  <rect x="300" y="480" width="240" height="130" rx="8" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
-  <circle cx="322" cy="502" r="4" fill="#f59e0b"/>
-  <text x="334" y="506" font-size="12" font-weight="600" fill="#b45309">Implementation</text>
-  <line x1="320" y1="516" x2="520" y2="516" stroke="#fde68a" stroke-width="1"/>
-  <text x="320" y="538" font-size="10" fill="#52525b">Plan committed, worktree</text>
-  <text x="320" y="554" font-size="10" fill="#52525b">created, coder writes code.</text>
-  <text x="320" y="586" font-size="9" fill="#b45309" font-style="italic">live resource metrics via SSE</text>
+  <rect x="300" y="490" width="240" height="120" rx="8" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
+  <circle cx="322" cy="512" r="4" fill="#f59e0b"/>
+  <text x="334" y="516" font-size="12" font-weight="600" fill="#b45309">Implementation</text>
+  <line x1="320" y1="526" x2="520" y2="526" stroke="#fde68a" stroke-width="1"/>
+  <text x="320" y="548" font-size="10" fill="#52525b">Plan committed, worktree</text>
+  <text x="320" y="564" font-size="10" fill="#52525b">created, coder writes code.</text>
+  <text x="320" y="592" font-size="9" fill="#b45309" font-style="italic">live resource metrics via SSE</text>
 
   <!-- Stage 3: Review (violet) -->
-  <rect x="560" y="480" width="240" height="130" rx="8" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5"/>
-  <circle cx="582" cy="502" r="4" fill="#7c3aed"/>
-  <text x="594" y="506" font-size="12" font-weight="600" fill="#6d28d9">Review</text>
-  <line x1="580" y1="516" x2="780" y2="516" stroke="#ddd6fe" stroke-width="1"/>
-  <text x="580" y="538" font-size="10" fill="#52525b">Diff + tests + per-stage</text>
-  <text x="580" y="554" font-size="10" fill="#52525b">resource usage shown.</text>
-  <text x="580" y="586" font-size="9" fill="#6d28d9" font-style="italic">feedback loops back</text>
+  <rect x="560" y="490" width="240" height="120" rx="8" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5"/>
+  <circle cx="582" cy="512" r="4" fill="#7c3aed"/>
+  <text x="594" y="516" font-size="12" font-weight="600" fill="#6d28d9">Review</text>
+  <line x1="580" y1="526" x2="780" y2="526" stroke="#ddd6fe" stroke-width="1"/>
+  <text x="580" y="548" font-size="10" fill="#52525b">Diff + tests + per-stage</text>
+  <text x="580" y="564" font-size="10" fill="#52525b">resource usage shown.</text>
+  <text x="580" y="592" font-size="9" fill="#6d28d9" font-style="italic">feedback loops back</text>
 
   <!-- Stage 4: Done (zinc) -->
-  <rect x="820" y="480" width="240" height="130" rx="8" fill="#f4f4f5" stroke="#d4d4d8" stroke-width="1.5"/>
-  <circle cx="842" cy="502" r="4" fill="#52525b"/>
-  <text x="854" y="506" font-size="12" font-weight="600" fill="#3f3f46">Done</text>
-  <line x1="840" y1="516" x2="1040" y2="516" stroke="#d4d4d8" stroke-width="1"/>
-  <text x="840" y="538" font-size="10" fill="#52525b">Cherry-pick into main,</text>
-  <text x="840" y="554" font-size="10" fill="#52525b">worktree &amp; branch cleaned.</text>
-  <text x="840" y="586" font-size="9" fill="#3f3f46" font-style="italic">commit visible in log</text>
+  <rect x="820" y="490" width="240" height="120" rx="8" fill="#f4f4f5" stroke="#d4d4d8" stroke-width="1.5"/>
+  <circle cx="842" cy="512" r="4" fill="#52525b"/>
+  <text x="854" y="516" font-size="12" font-weight="600" fill="#3f3f46">Done</text>
+  <line x1="840" y1="526" x2="1040" y2="526" stroke="#d4d4d8" stroke-width="1"/>
+  <text x="840" y="548" font-size="10" fill="#52525b">Cherry-pick into main,</text>
+  <text x="840" y="564" font-size="10" fill="#52525b">worktree &amp; branch cleaned.</text>
+  <text x="840" y="592" font-size="9" fill="#3f3f46" font-style="italic">commit visible in log</text>
 
   <!-- Arrows between stages (forward) -->
-  <line x1="280" y1="545" x2="300" y2="545" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="540" y1="545" x2="560" y2="545" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="800" y1="545" x2="820" y2="545" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="280" y1="550" x2="300" y2="550" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="540" y1="550" x2="560" y2="550" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="800" y1="550" x2="820" y2="550" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <!-- Feedback loop: Review -> Clarification (curved above) -->
-  <path d="M 680 480 C 680 430, 540 430, 420 430 C 280 430, 160 430, 160 480"
+  <path d="M 680 490 C 680 420, 540 420, 420 420 C 280 420, 160 420, 160 490"
         fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="5,3"
         marker-end="url(#arrow-violet)"/>
-  <rect x="370" y="420" width="100" height="18" rx="9" fill="#fafafa"/>
-  <text x="420" y="432" font-size="10" fill="#7c3aed" text-anchor="middle" font-style="italic">feedback</text>
+  <rect x="378" y="412" width="84" height="16" rx="8" fill="#ffffff" stroke="#ddd6fe" stroke-width="1"/>
+  <text x="420" y="424" font-size="10" fill="#7c3aed" text-anchor="middle" font-style="italic">feedback</text>
 
   <!-- Footer / invariant -->
   <rect x="40" y="640" width="1020" height="48" rx="8" fill="#f4f4f5" stroke="#e4e4e7" stroke-width="1"/>
