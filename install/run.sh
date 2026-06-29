@@ -105,16 +105,15 @@ MODE="${MODE:-1}"
 
 case "$MODE" in
   1)  # Background — systemd
-    # Pick a port. If the configured port is already taken by another
-    # dashboard instance, auto-increment until we find a free one.
+    # Pick a port. If the configured port is already listening
+    # (any service, not just dashboard), auto-increment.
     BASE_PORT=$(grep "^PORT=" "$ENV_FILE" 2>/dev/null | sed 's/^[^=]*=//' || echo "3006")
     PORT="$BASE_PORT"
-    while systemctl --user list-units --no-pager 2>/dev/null | grep -q "jira-dashboard-${PORT}\.service.*active"; do
+    while ss -tlnp 2>/dev/null | grep -q ":${PORT}\b"; do
       PORT=$((PORT + 1))
     done
     if [ "$PORT" != "$BASE_PORT" ]; then
-      info "Port ${BASE_PORT} is taken — using port ${PORT} instead"
-      # Persist the chosen port so future installs reuse it
+      info "Port ${BASE_PORT} is already in use — using port ${PORT} instead"
       if grep -q "^PORT=" "$ENV_FILE" 2>/dev/null; then
         sed -i "s|^PORT=.*|PORT=${PORT}|" "$ENV_FILE"
       else
