@@ -2,6 +2,37 @@
 
 Lightweight ticket dashboard for AI-assisted development. No DB servers, no cloud accounts.
 
+## Screenshots
+
+### Board (Desktop)
+
+The four-stage board (Clarification → Implementation → Review → Done) with AI-suggested tickets above. Theme follows system preference; toggle to dark with the moon icon.
+
+![Desktop board — light mode](docs/screenshots/desktop-board-light.png)
+
+![Desktop board — dark mode](docs/screenshots/desktop-board-dark.png)
+
+### Ticket Detail (Desktop)
+
+Click any card to open the full ticket popup: description, implementation plan, unit-test results with collapsible output, per-stage resource usage (CPU / memory / cost / tokens), and the activity timeline on the right.
+
+![Desktop ticket popup — light](docs/screenshots/desktop-ticket-done.png)
+
+![Desktop ticket popup — dark](docs/screenshots/desktop-ticket-done-dark.png)
+
+### Mobile
+
+Single-column layout, full-screen sheet for ticket detail. Touch-friendly button sizes (44px tap targets), collapsible activity log, same data, no compromises.
+
+<p align="center">
+  <img src="docs/screenshots/mobile-board-light.png" alt="Mobile board — light" width="48%">
+  <img src="docs/screenshots/mobile-board-dark.png" alt="Mobile board — dark" width="48%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/mobile-ticket.png" alt="Mobile ticket detail" width="48%">
+</p>
+
 ## Quick Start
 
 ```bash
