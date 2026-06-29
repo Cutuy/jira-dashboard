@@ -12,6 +12,7 @@ export LC_ALL=C
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$INSTALL_DIR")"
+ORIG_CWD="$PWD"
 cd "$ROOT"
 
 # ── Output helpers ─────────────────────────────────────────
@@ -43,6 +44,10 @@ step "Configuration"
 default_project="${HOME}/project"
 PROJECT_DIR=$(prompt "Absolute path to your git repo [${default_project}]")
 PROJECT_DIR="${PROJECT_DIR:-$default_project}"
+case "$PROJECT_DIR" in
+  /*) ;; # absolute, ok
+  *)  PROJECT_DIR="${ORIG_CWD}/${PROJECT_DIR}" ;; # relative → resolve from user's cwd
+esac
 [ -d "$PROJECT_DIR" ] || fail "Directory does not exist: ${PROJECT_DIR}"
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 [ -d "$PROJECT_DIR/.git" ] || fail "${PROJECT_DIR} is not a git repository — worktree features require git"
