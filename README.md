@@ -33,6 +33,10 @@ Opens http://localhost:3006.
 - **Linux only** — resource monitor reads `/proc/<pid>/stat`.
 - **Python venv** — `VIRTUAL_ENV` and `.venv/bin/` are prepended automatically.
 
+## Architecture
+
+![Isolation architecture](docs/architecture.svg)
+
 ## Workflow
 
 The full ticket lifecycle, board to merge — click any card to open the popup.
