@@ -7,12 +7,6 @@ node_modules/
 # Backup files
 *.bak
 
-# Per-instance data directories
-data/store.db
-data/store.db-shm
-data/store.db-wal
-data*/
-
 # Environment / secrets
 .env.local
 .env.*.local
