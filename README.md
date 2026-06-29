@@ -4,34 +4,45 @@ Lightweight ticket dashboard for AI-assisted development. No DB servers, no clou
 
 ## Screenshots
 
-### Board (Desktop)
+The full ticket lifecycle, board to merge — click any card to open the popup.
 
-The four-stage board (Clarification → Implementation → Review → Done) with AI-suggested tickets above. Theme follows system preference; toggle to dark with the moon icon.
+### Home
 
-![Desktop board — light mode](docs/screenshots/desktop-board-light.png)
+The four-stage board with AI-suggested tickets queued above. Create new tickets inline, run tests, trigger a pre-push check from the header.
 
-![Desktop board — dark mode](docs/screenshots/desktop-board-dark.png)
+![Desktop home](docs/screenshots/desktop-home.png)
 
-### Ticket Detail (Desktop)
+### Clarification
 
-Click any card to open the full ticket popup: description, implementation plan, unit-test results with collapsible output, per-stage resource usage (CPU / memory / cost / tokens), and the activity timeline on the right.
+The dashboard asks focused questions, accepts multiple-choice or free-form answers (including an "Other" escape hatch), and supports multi-round back-and-forth before code is written.
 
-![Desktop ticket popup — light](docs/screenshots/desktop-ticket-done.png)
+![Clarification stage](docs/screenshots/desktop-clarification.png)
 
-![Desktop ticket popup — dark](docs/screenshots/desktop-ticket-done-dark.png)
+### Implementation
+
+Once answers are in, the AI drafts a plan and commits it to a per-ticket worktree. The same plan becomes the spec the implementation runs against.
+
+![Implementation stage](docs/screenshots/desktop-implementation.png)
+
+### Review
+
+The worktree, branch, and diff are linked straight to your editor (VSCode / Cursor). Per-stage resource usage breaks down CPU, memory, cost, and tokens for the clarification vs. implementation calls so you can spot runaway runs. One click cherry-picks into `main`.
+
+![Review stage](docs/screenshots/desktop-review.png)
+
+### Done
+
+Merged commit, plan, test report with collapsible output, and the full activity timeline — the ticket's complete history in one view.
+
+![Done stage](docs/screenshots/desktop-done.png)
 
 ### Mobile
 
-Single-column layout, full-screen sheet for ticket detail. Touch-friendly button sizes (44px tap targets), collapsible activity log, same data, no compromises.
+Single-column layout, full-screen sheet for ticket detail. Touch-friendly button sizes, the same data, no compromises.
 
-<p align="center">
-  <img src="docs/screenshots/mobile-board-light.png" alt="Mobile board — light" width="48%">
-  <img src="docs/screenshots/mobile-board-dark.png" alt="Mobile board — dark" width="48%">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/mobile-ticket.png" alt="Mobile ticket detail" width="48%">
-</p>
+| Home | Ticket |
+|:---:|:---:|
+| ![Mobile home](docs/screenshots/mobile-home.png) | ![Mobile ticket](docs/screenshots/mobile-ticket.png) |
 
 ## Quick Start
 
