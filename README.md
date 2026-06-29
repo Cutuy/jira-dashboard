@@ -20,23 +20,6 @@ Opens http://localhost:3006.
 | `<project>/.env` | Environment for the coder subprocess (API keys, venv) | Usually not |
 | `config.json` | Structural defaults (timeouts) | Yes |
 
-### How config loading works
-
-1. Walks up from `cwd` looking for `.jira-dashboard/.env` → that directory becomes `projectDir`
-2. Loads `.jira-dashboard/.env` as dashboard settings
-3. Loads `<project>/.env` and injects into `process.env` — coder CLI inherits these
-4. `config.json` values are fallbacks for everything
-
-### Caveats
-
-- **API keys** go in `<project>/.env` (not `.jira-dashboard/.env`). Only the project root `.env` is passed to the coder child process.
-- **Linux only** — resource monitor reads `/proc/<pid>/stat`.
-- **Python venv** — `VIRTUAL_ENV` and `.venv/bin/` are prepended automatically.
-
-## Architecture
-
-![Isolation architecture](docs/architecture.svg)
-
 ## Workflow
 
 The full ticket lifecycle, board to merge — click any card to open the popup.
@@ -55,16 +38,27 @@ The full ticket lifecycle, board to merge — click any card to open the popup.
 |:---:|:---:|
 | ![Mobile home](docs/screenshots/mobile-home.png) | ![Mobile ticket](docs/screenshots/mobile-ticket.png) |
 
-## For Maintainers
+## Advanced usage
 
 ```bash
 npm test            # run all tests
 npm run test:config # config loader only
+git config core.hooksPath .githooks # pre-push hook
 ```
 
-### Pre-push hook
+### How config loading works
 
-```bash
-git config core.hooksPath .githooks
-```
+1. Walks up from `cwd` looking for `.jira-dashboard/.env` → that directory becomes `projectDir`
+2. Loads `.jira-dashboard/.env` as dashboard settings
+3. Loads `<project>/.env` and injects into `process.env` — coder CLI inherits these
+4. `config.json` values are fallbacks for everything
 
+### Caveats
+
+- **API keys** go in `<project>/.env` (not `.jira-dashboard/.env`). Only the project root `.env` is passed to the coder child process.
+- **Linux only** — resource monitor reads `/proc/<pid>/stat`.
+- **Python venv** — `VIRTUAL_ENV` and `.venv/bin/` are prepended automatically.
+
+### Architecture
+
+![Architecture](docs/architecture.svg)

@@ -1056,35 +1056,44 @@ const SUGGESTIONS_MAX = 5;
 const SUGGESTIONS_TICKET_ID = '_suggestions';
 const SUGGESTION_ID_PREFIX = 'sug-';
 
-async function generateSuggestions() {
-  try {
-    const visionPath = path.join(config.projectDir, 'docs', 'vision.md');
-    const vision = fs.existsSync(visionPath) ? fs.readFileSync(visionPath, 'utf-8') : '';
+async function generateSuggestions(retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const visionPath = path.join(config.projectDir, 'docs', 'vision.md');
+      const vision = fs.existsSync(visionPath) ? fs.readFileSync(visionPath, 'utf-8') : '';
 
-    const sugDir = path.join(config.ticketContextDir(SUGGESTIONS_TICKET_ID));
-    fs.mkdirSync(sugDir, { recursive: true });
-    const contextFile = path.join(sugDir, 'context.md');
-    fs.writeFileSync(contextFile,
-      `# Suggestion generation context\n\n_Generated ${new Date().toISOString()}._\n\n` +
-      `## Project root\n\n\`\`\`\n${config.projectDir}\n\`\`\`\n\n` +
-      `## Project vision (${visionPath})\n\n${vision}\n`
-    );
+      const sugDir = path.join(config.ticketContextDir(SUGGESTIONS_TICKET_ID));
+      fs.mkdirSync(sugDir, { recursive: true });
+      const contextFile = path.join(sugDir, 'context.md');
+      fs.writeFileSync(contextFile,
+        `# Suggestion generation context\n\n_Generated ${new Date().toISOString()}._\n\n` +
+        `## Project root\n\n\`\`\`\n${config.projectDir}\n\`\`\`\n\n` +
+        `## Project vision (${visionPath})\n\n${vision}\n`
+      );
 
-    const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nRead vision + project root at: ${contextFile}`;
-    const output = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest });
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    if (parsed && Array.isArray(parsed.tickets)) {
-      suggestions = parsed.tickets.map(t => ({
-        id: SUGGESTION_ID_PREFIX + crypto.randomBytes(4).toString('hex'),
-        title: t.title,
-        content: t.content,
-      }));
-      console.log(`Generated ${suggestions.length} ticket suggestions`);
+      const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nRead vision + project root at: ${contextFile}`;
+      const output = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest });
+      const jsonMatch = output.match(/\{[\s\S]*\}/);
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+      if (parsed && Array.isArray(parsed.tickets)) {
+        suggestions = parsed.tickets.map(t => ({
+          id: SUGGESTION_ID_PREFIX + crypto.randomBytes(4).toString('hex'),
+          title: t.title,
+          content: t.content,
+        }));
+        console.log(`Generated ${suggestions.length} ticket suggestions`);
+        return;
+      }
+    } catch (e) {
+      console.log(`Suggestion generation failed (attempt ${attempt}/${retries}):`, e.message);
+      if (attempt < retries) {
+        const delay = 5000 * Math.pow(2, attempt - 1);
+        console.log(`Retrying in ${delay / 1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
-  } catch (e) {
-    console.log('Suggestion generation failed:', e.message);
   }
+  console.log(`Suggestion generation exhausted all ${retries} retries`);
 }
 
 app.get('/api/suggestions', (req, res) => res.json(suggestions));

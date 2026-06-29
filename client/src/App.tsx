@@ -133,18 +133,19 @@ function IconBtn({ children, label, ...rest }: React.ButtonHTMLAttributes<HTMLBu
 /* ─────────────────────────────────────────────────────────
    Card
    ───────────────────────────────────────────────────────── */
-function TicketCard({ t, onOpen }: { t: T; onOpen: (id: string) => void }) {
+function TicketCard({ t, onOpen, loading }: { t: T; onOpen: (id: string) => void; loading?: boolean }) {
   const meta = STAGE_META[t.stage as Stage]
   const running = t.status === 'running'
   const qaCount = t.questions?.length || 0
   return (
     <button
-      onClick={() => onOpen(t.id)}
-      className="group w-full text-left bg-surface rounded-lg ring-1 ring-border hover:ring-ink-3 hover:shadow-sm active:bg-bg transition-all p-3.5 flex flex-col gap-2.5"
+      onClick={() => { if (!loading) onOpen(t.id) }}
+      className={`group w-full text-left bg-surface rounded-lg ring-1 ring-border hover:ring-ink-3 hover:shadow-sm active:bg-bg transition-all p-3.5 flex flex-col gap-2.5 ${loading ? 'opacity-50 pointer-events-none' : ''}`}
     >
       <div className="flex items-center justify-between">
         <span className="t-mono-11 text-ink-3 truncate">{t.id}</span>
-        {running && <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />}
+        {loading && <Loader2 className="h-3.5 w-3.5 text-accent animate-spin" />}
+        {!loading && running && <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />}
       </div>
       <p className="t-body font-medium text-ink-1 clamp-2 leading-snug">{t.title}</p>
       <div className="flex items-center justify-between pt-1 border-t border-surface-3">
@@ -673,6 +674,9 @@ export default function App() {
   const [out, setOut] = useState({ open: false, title: '', text: '', status: '' })
   const [suggestions, setSuggestions] = useState<Sug[]>([])
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
+  const [suggestionsFailed, setSuggestionsFailed] = useState(false)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
+  const abort = useRef<AbortController | null>(null)
   const [theme, setTheme] = useState<'auto' | 'dark' | 'light'>(
     (typeof localStorage !== 'undefined' && localStorage.getItem('theme') as any) || 'auto'
   )
@@ -744,8 +748,14 @@ export default function App() {
 
   /* Open ticket — start SSE stream */
   async function open(id: string) {
+    if (abort.current) { abort.current.abort(); abort.current = null }
+    setLoadingId(id)
+    const ac = new AbortController()
+    abort.current = ac
     try {
-      const t: T = await fetchJSON(`/api/tickets/${id}`)
+      const t: T = await fetchJSON(`/api/tickets/${id}`, { signal: ac.signal })
+      if (ac.signal.aborted) return
+      abort.current = null; setLoadingId(null)
       setSel(t)
       setTickets(p => p.map(x => (x.id === id ? t : x)))
       lastUpd.current = t.updated_at
@@ -823,23 +833,31 @@ export default function App() {
       })
 
       es.onerror = () => {} // auto-reconnect built into EventSource
-    } catch {
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return
       setError('Ticket not found')
+    } finally {
+      if (abort.current === ac) { abort.current = null; setLoadingId(null) }
     }
   }
 
   function close() {
+    if (abort.current) { abort.current.abort(); abort.current = null; setLoadingId(null) }
     setSel(null)
     if (poll.current) { poll.current.close(); poll.current = undefined }
     if (location.hash.startsWith('#ticket/')) history.replaceState(null, '', ' ')
   }
 
   async function loadSuggestions() {
-    setSuggestionsLoading(true)
-    const poll = () => fetchJSON<Sug[]>('/api/suggestions').then(d => {
-      if (d.length > 0) { setSuggestions(d); setSuggestionsLoading(false); return }
-      setTimeout(poll, 3000)
-    }).catch(() => setTimeout(poll, 3000))
+    setSuggestionsLoading(true); setSuggestionsFailed(false)
+    let attempts = 0
+    const poll = () => {
+      if (++attempts > 15) { setSuggestionsLoading(false); setSuggestionsFailed(true); return }
+      fetchJSON<Sug[]>('/api/suggestions').then(d => {
+        if (d.length > 0) { setSuggestions(d); setSuggestionsLoading(false); return }
+        setTimeout(poll, 3000)
+      }).catch(() => setTimeout(poll, 3000))
+    }
     poll()
   }
 
@@ -1110,6 +1128,13 @@ export default function App() {
             </div>
           </div>
         )}
+        {suggestionsFailed && suggestions.length === 0 && (
+          <div className="mb-5 sm:mb-6">
+            <button onClick={loadSuggestions} className="t-small text-ink-3 hover:text-accent underline cursor-pointer">
+              Failed to load suggestions — tap to retry
+            </button>
+          </div>
+        )}
         {suggestionsLoading && suggestions.length === 0 && (
           <div className="mb-5 sm:mb-6 flex items-center gap-2 text-ink-3 t-small">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -1141,7 +1166,7 @@ export default function App() {
                       No tickets
                     </div>
                   )}
-                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} />)}
+                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} />)}
                 </div>
               </section>
             )
@@ -1150,6 +1175,14 @@ export default function App() {
       </main>
 
       {/* ── Ticket popup ── */}
+      {loadingId && !sel && (
+        <Dialog onClose={close}>
+          <div className="flex items-center justify-center gap-2 p-8 text-ink-3 t-body">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading ticket…
+          </div>
+        </Dialog>
+      )}
       {sel && (
         <Dialog onClose={close}>
           <DialogHeader>

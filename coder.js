@@ -29,29 +29,6 @@ const opencodeBackend = {
     }
   },
 
-  listSessions() {
-    try {
-      return execSync(`${config.coder.bin} session list`, {
-        encoding: 'utf-8',
-        timeout: config.coder.timeouts.command,
-        stdio: 'pipe',
-      });
-    } catch {
-      return '';
-    }
-  },
-
-  resolveSessionId(title) {
-    const list = this.listSessions();
-    for (const line of list.split('\n')) {
-      if (line.includes(title)) {
-        const sid = line.trim().split(/\s+/)[0];
-        if (sid.startsWith('ses_')) return sid;
-      }
-    }
-    return null;
-  },
-
   buildArgs(prompt, sessionId, title) {
     const args = ['run'];
     if (sessionId) {
@@ -78,8 +55,6 @@ const dummyBackend = {
   stats() {
     return { cost: 0, input: '0', output: '0' };
   },
-  listSessions() { return ''; },
-  resolveSessionId() { return null; },
   // dummy just echoes the prompt back — no real process spawned
   async runDummy(prompt) {
     return `[dummy output] Received prompt: ${prompt.slice(0, 80)}`;
