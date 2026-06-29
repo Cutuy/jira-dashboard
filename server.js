@@ -1029,7 +1029,7 @@ app.get('/api/run/:id', (req, res) => {
 
 // ── Dry-run pre-push hook ─────────────────────────────────
 app.post('/api/prepush', (req, res) => {
-  const hookPath = path.join(__dirname, '.githooks', 'pre-push');
+  const hookPath = path.join(config.projectDir, '.githooks', 'pre-push');
   if (!fs.existsSync(hookPath)) return res.status(400).json({ error: 'Pre-push hook not found' });
 
   const runId = `${PREPUSH_RUN_PREFIX}${Date.now()}`;
