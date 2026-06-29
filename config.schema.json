@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Jira Dashboard Config",
+  "description": "Structural settings for the dashboard. Machine-specific overrides go in .env instead.",
+  "type": "object",
+  "properties": {
+    "port": {
+      "description": "HTTP port the dashboard listens on. Prefer PORT in .env.",
+      "type": "integer",
+      "default": 3006
+    },
+    "data_dir": {
+      "description": "Directory for SQLite database and runtime files, relative to dashboard root.",
+      "type": "string",
+      "default": "data"
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Display name shown in the dashboard header. Override with JIRA_PROJECT_NAME in .env.",
+          "type": "string",
+          "default": "project"
+        },
+        "path": {
+          "description": "Absolute path to the git repo this dashboard manages. Override with JIRA_PROJECT_DIR in .env.",
+          "type": "string"
+        }
+      }
+    },
+    "worktrees": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "description": "Where to create git worktrees. Defaults to <projectDir>/.worktrees. Override with JIRA_WORKTREES_DIR in .env.",
+          "type": ["string", "null"],
+          "default": null
+        }
+      }
+    },
+    "coder": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Coder backend to use (e.g. opencode, dummy). Override with JIRA_CODER_TYPE in .env.",
+          "type": "string",
+          "default": "opencode"
+        },
+        "bin": {
+          "description": "Path to the coder CLI binary. Override with JIRA_CODER_BIN in .env.",
+          "type": "string",
+          "default": "opencode"
+        },
+        "timeouts": {
+          "type": "object",
+          "description": "Max runtime (ms) for each coder stage.",
+          "properties": {
+            "clarify": { "type": "integer", "default": 180000 },
+            "implement": { "type": "integer", "default": 600000 },
+            "suggest": { "type": "integer", "default": 120000 },
+            "test": { "type": "integer", "default": 300000 },
+            "command": { "type": "integer", "default": 30000 }
+          }
+        }
+      }
+    },
+    "venv": {
+      "type": "object",
+      "description": "Python virtualenv config (only relevant for Python projects).",
+      "properties": {
+        "path": {
+          "description": "Venv directory relative to projectDir. Override with JIRA_VENV_DIR in .env.",
+          "type": "string",
+          "default": ".venv"
+        },
+        "pythonpath": {
+          "description": "PYTHONPATH subdirectory relative to projectDir. Override with JIRA_PYTHONPATH in .env.",
+          "type": "string",
+          "default": "src"
+        }
+      }
+    },
+    "test": {
+      "type": "object",
+      "properties": {
+        "command_override": {
+          "description": "Explicit test command instead of auto-detection. Override with JIRA_TEST_CMD in .env.",
+          "type": ["string", "null"],
+          "default": null
+        },
+        "timeout": {
+          "description": "Max runtime (ms) for test runner and pre-push hook. Override with JIRA_TEST_TIMEOUT in .env.",
+          "type": "integer",
+          "default": 300000
+        }
+      }
+    },
+    "mergeStrategy": {
+      "description": "How to close tickets: cherry-pick (merge into default branch) or pr (push + GitHub PR). Override with MERGE_STRATEGY in .env.",
+      "type": "string",
+      "enum": ["cherry-pick", "pr"],
+      "default": "cherry-pick"
+    },
+    "remoteHost": {
+      "description": "SSH hostname for VSCode/Cursor remote URIs. Override with REMOTE_HOST in .env.",
+      "type": "string",
+      "default": "example-claw"
+    },
+    "explorer": {
+      "type": "object",
+      "description": "File explorer URL template for diff file links.",
+      "properties": {
+        "url": {
+          "description": "URL template with {protocol} {host} {sha} {path} {prefix} {owner} {repo} placeholders. Override with EXPLORER_URL in .env.",
+          "type": "string",
+          "default": "https://github.com/{owner}/{repo}/blob/{sha}/{path}"
+        },
+        "owner": {
+          "description": "GitHub owner/org for default explorer URLs. Override with GITHUB_OWNER in .env.",
+          "type": "string",
+          "default": ""
+        },
+        "repo": {
+          "description": "GitHub repo name for default explorer URLs. Override with GITHUB_REPO in .env.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "branchDefault": {
+      "description": "Default git branch for checkout/rebase operations. Override with GIT_DEFAULT_BRANCH in .env.",
+      "type": "string",
+      "default": "main"
+    },
+    "dbBusyTimeout": {
+      "description": "SQLite busy timeout in milliseconds. Override with DB_BUSY_TIMEOUT in .env.",
+      "type": "integer",
+      "default": 5000
+    }
+  }
+}

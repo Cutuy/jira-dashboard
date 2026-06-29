@@ -10,58 +10,31 @@ single-page app. No database servers, no cloud accounts.
 git clone <this-repo>
 cd jira-dashboard
 
-# 1. Point at YOUR project and your AI coder
+# 1. Point at YOUR project
 cp .env.example .env
-# Edit .env — at minimum set:
-#   JIRA_PROJECT_DIR=/path/to/your/repo
-#   JIRA_CODER_BIN=/path/to/your/coder-cli
+# Edit .env — at minimum set JIRA_PROJECT_DIR and JIRA_CODER_BIN
 
-# 2. Optionally tell the dashboard about your project
-#    Edit config.json → project.name = "My Project"
-
-# 3. Install & build
+# 2. Install & build
 npm install
 cd client && npm install && npm run build && cd ..
 
-# 4. Start
+# 3. Start
 npm start
 ```
 
-Open http://localhost:3006. You'll see an empty board. Click **Create Ticket** to
-start a new ticket — the AI will ask clarifying questions, implement code in an
-isolated git worktree, and run tests.
+Open http://localhost:3006.
 
-## What You Configure
+## Configuration
 
-| File | What goes there |
+Two files control the dashboard. Neither contains hardcoded paths:
+
+| File | Purpose |
 |---|---|
-| `.env` | **Your machine-specific values** — project path, coder binary path, remote hostname, ports. Gitignored. |
-| `config.json` | **Structural defaults** — project name, timeouts. Tracked in git. |
+| `.env` | **Your machine-specific overrides** — project path, coder binary, ports. Not tracked in git. See `.env.example` for all available vars. |
+| `config.json` | **Structural defaults** — timeouts, backend config. Tracked in git. See `config.schema.json` for full documentation. |
 
-`.env` values override `config.json` values. Everything has a sensible default so
+`.env` values override `config.json` values. Every field has a sensible default —
 you can start with just `JIRA_PROJECT_DIR` and `JIRA_CODER_BIN`.
-
-### Minimal `.env`
-
-```
-JIRA_PROJECT_DIR=/home/me/my-project
-JIRA_CODER_BIN=/home/me/bin/opencode
-```
-
-### All available env vars (see `.env.example`)
-
-| Var | What | Default |
-|---|---|---|
-| `PORT` | Dashboard port | `3006` |
-| `JIRA_PROJECT_DIR` | Your project's root | `process.cwd()` |
-| `JIRA_PROJECT_NAME` | Display name in header | `"project"` |
-| `JIRA_CODER_BIN` | Path to your AI coder CLI | `"opencode"` |
-| `JIRA_CODER_TYPE` | Coder backend | `"opencode"` |
-| `JIRA_DATA_DIR` | Separate database directory | `<dashboard>/data/` |
-| `REMOTE_HOST` | SSH host for VSCode/Cursor links | `"example-claw"` |
-| `GIT_DEFAULT_BRANCH` | Your repo's main branch | `"main"` |
-| `MERGE_STRATEGY` | How to close tickets: `cherry-pick` or `pr` | `"cherry-pick"` |
-| `EXPLORER_URL` | URL template for diff file links | GitHub blob URL |
 
 ## Workflow
 
