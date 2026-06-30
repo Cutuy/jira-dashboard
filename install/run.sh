@@ -32,7 +32,7 @@ step "Prerequisites"
 command -v node >/dev/null 2>&1 || fail "Node.js is not installed. Install Node.js >= 18 first."
 command -v npm  >/dev/null 2>&1 || fail "npm is not installed."
 command -v git  >/dev/null 2>&1 || fail "git is not installed."
-command -v envsubst >/dev/null 2>&1 || fail "envsubst is not installed (usually part of gettext)."
+OS="$(uname -s)"
 
 NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
 [ "$NODE_MAJOR" -ge 18 ] || fail "Node.js >= 18 required (found v$(node -v)). Upgrade Node.js first."
@@ -77,7 +77,7 @@ mkdir -p "$ENV_DIR"
 if [ -f "$ENV_FILE" ]; then
   ok ".env already exists at ${ENV_FILE} — keeping your settings"
 else
-  PORT=3006; while ss -tlnp 2>/dev/null | grep -q ":${PORT}\b"; do PORT=$((PORT + 1)); done
+  PORT=$(node "${ROOT}/service/index.js" find-port 3006)
   cat > "$ENV_FILE" <<-EOF
 JIRA_PROJECT_NAME=${PROJECT_NAME}
 JIRA_CODER_BIN=${CODER_BIN}
@@ -103,35 +103,25 @@ step "Client"
 (cd client && npm run build | tail -3)
 ok "Client built"
 
-# ── Step 4: Systemd service ─────────────────────────────────
-step "Systemd service"
+# ── Step 4: Install service ────────────────────────────────
+case "$OS" in
+  Linux)  step "Service (systemd)" ;;
+  Darwin) step "Service (launchd)" ;;
+esac
 
 PORT=$(grep "^PORT=" "$ENV_FILE" 2>/dev/null | sed 's/^[^=]*=//' || echo "3006")
-UNIT_NAME="jira-dashboard-${PORT}"
-UNIT_PATH="$HOME/.config/systemd/user/${UNIT_NAME}.service"
-SVC_TEMPLATE="$INSTALL_DIR/templates/template.service"
 
-if [ -f "$UNIT_PATH" ]; then
-  ok "Service ${UNIT_NAME} already exists — restarting"
-else
-  mkdir -p "$HOME/.config/systemd/user"
-  NODE=$(command -v node) \
-  ROOT="$ROOT" \
-  PORT="$PORT" \
-  PROJECT_DIR="$PROJECT_DIR" \
-  NAME="$PROJECT_NAME" \
-  envsubst '${NODE} ${ROOT} ${PORT} ${PROJECT_DIR} ${NAME}' < "$SVC_TEMPLATE" > "$UNIT_PATH"
-  ok "Created ${UNIT_PATH}"
-fi
-
-systemctl --user daemon-reload
-systemctl --user enable "${UNIT_NAME}.service"
-systemctl --user restart "${UNIT_NAME}.service"
+node "${ROOT}/service/index.js" install \
+  "$PORT" "$ROOT" "$PROJECT_DIR" "$PROJECT_NAME"
 
 echo ""
 ok "${BOLD}Dashboard running at http://localhost:${PORT}${NC}"
 echo ""
-info "Manage:  systemctl --user ${UNIT_NAME}.service {start|stop|restart|status}"
-info "Logs:    journalctl --user -u ${UNIT_NAME}.service -f"
-info "Config:  edit ${ENV_FILE} then restart the service"
-info "Data:    ${PROJECT_DIR}/.jira-dashboard/store.db"
+
+MGMT=$(node -e "
+  const svc = require('${ROOT}/service');
+  svc.manageHelp({port:'${PORT}'}).forEach(l => console.log(l));
+  console.log('Config:  edit ${ENV_FILE} then restart the service');
+  console.log('Data:    ${PROJECT_DIR}/.jira-dashboard/store.db');
+")
+while IFS= read -r line; do info "$line"; done <<< "$MGMT"
