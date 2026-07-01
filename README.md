@@ -8,6 +8,8 @@ questions, proposes a plan, implements in an isolated git worktree, runs
 tests, and hands you a branch to review. Human in the loop, no context
 switching, no ticket groomers.
 
+![Demo: ticket flow from backlog to done](docs/demo.gif)
+
 ![Architecture](docs/architecture.svg)
 
 ## Quick Start
