@@ -1099,7 +1099,7 @@ export default function App() {
   /* Filtered activity for the sidebar (drop noise) */
   const visibleActivity = useMemo(() => {
     if (!sel) return []
-    return (sel.activity || []).filter(a => a.action !== 'resource' && a.action !== 'file_changed')
+    return (sel.activity || []).filter(a => a.action !== 'resource' && a.action !== 'file_changed' && a.action !== 'rebase_coder_progress')
   }, [sel])
 
   return (
@@ -1450,6 +1450,22 @@ export default function App() {
                 {/* Review */}
                 {sel.stage === 'review' && (
                   <>
+                    {sel.status === 'running' && (
+                      <Section title="Live status">
+                        <div className="flex items-center gap-2 t-body text-ink-2 mb-3">
+                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                          Resolving rebase conflicts…
+                        </div>
+                        <div className="mt-3 rounded-lg ring-1 ring-border p-3">
+                          <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
+                        </div>
+                        {stdoutLines.length > 0 && (
+                          <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
+                            {stdoutLines.map((l, i) => <div key={i}>{l}</div>)}
+                          </div>
+                        )}
+                      </Section>
+                    )}
                     {sel.worktree_path && (
                       <Section title="Worktree">
                         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 t-mono-12">

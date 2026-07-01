@@ -1033,12 +1033,19 @@ Your job:
 
 If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own line and explain what is blocking you.`;
 
+      db.updateTicketField(ticket.id, 'status', 'running');
       try {
         const resolveOutput = await runCoder(ticket.id, resolvePrompt, {
           timeout: config.coder.timeouts.implement,
           onProgress: (line) => {
-            db.logActivity(ticket.id, 'rebase_coder_progress', line.slice(0, 200));
-            sseBroadcast(ticket.id, 'stdout', { text: `[resolve] ${line}` });
+            if (line.startsWith('[resource] ')) {
+              const detail = line.slice(11);
+              db.logActivity(ticket.id, 'resource', detail, 'review');
+              sseBroadcast(ticket.id, 'resource', { detail });
+            } else {
+              db.logActivity(ticket.id, 'rebase_coder_progress', line.slice(0, 200));
+              sseBroadcast(ticket.id, 'stdout', { text: line });
+            }
           },
           cwd: ticket.worktree_path,
         });
@@ -1079,7 +1086,7 @@ If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own lin
         const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts in:\n${
           conflictFiles.join('\n') || '(unknown files)'
         }\n\nThe rebase conflict resolver could not resolve these automatically. Please answer the clarification questions to guide resolution.`;
-        db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null });
+        db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null, status: 'idle' });
         sseBroadcast(ticket.id, 'stdout', { text: 'Rebase conflicts could not be resolved — ticket moved to clarification with conflict questions' });
 
         return res.json({
@@ -1096,7 +1103,7 @@ If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own lin
         await generateConflictClarification(ticket, conflictFiles, gitStatus, null);
 
         const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease answer the clarification questions to guide resolution.`;
-        db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null });
+        db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null, status: 'idle' });
 
         return res.json({
           success: false,
@@ -1218,12 +1225,29 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
       try {
         runGit(`cherry-pick ${commitSha}`);
       } catch (err) {
+        let conflictFiles = [];
+        let gitStatus = '';
+        try {
+          conflictFiles = runGit(`diff --name-only --diff-filter=U`)
+            .split('\n').map(s => s.trim()).filter(Boolean);
+          gitStatus = runGit(`status --short`);
+        } catch {}
         try { runGit(`cherry-pick --abort`); } catch {}
-        db.logActivity(ticket.id, 'cherry_pick_conflict',
-          `Cherry-pick conflict on ${ticket.branch_name}. User should rebase onto ${config.branchDefault} first.`);
+        const errorDetail = err.message ? err.message.slice(0, 300) : '';
+        const fileList = conflictFiles.length > 0
+          ? '\nConflicting files:\n' + conflictFiles.map(f => '  • ' + f).join('\n')
+          : '';
+        const gitHint = conflictFiles.length === 0
+          ? `\nGit error: ${errorDetail}`
+          : '';
+        const detail = `Cherry-pick failed on ${ticket.branch_name}. ` +
+          `Reason: the rebase squashes all ticket commits into one, ` +
+          `whose combined diff can conflict with ${config.branchDefault} even if each individual commit rebased cleanly.` +
+          fileList + gitHint;
+        db.logActivity(ticket.id, 'cherry_pick_conflict', detail);
         res.status(409).json({
-          error: `Cherry-pick conflicts with ${config.branchDefault}. ` +
-            `Rebase ${ticket.branch_name} onto ${config.branchDefault} first, resolve conflicts there, then try again.`,
+          error: `Cherry-pick failed against ${config.branchDefault}.` +
+            fileList + gitHint,
           ticket: db.getTicket(ticket.id)
         });
         return;
