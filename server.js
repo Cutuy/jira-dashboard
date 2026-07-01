@@ -1029,9 +1029,8 @@ Your job:
 2. Resolve the merge conflicts by editing the files
 3. Run \`git add\` on the resolved files to mark them as resolved
 4. Run \`git rebase --continue\` to complete the rebase
-5. Commit any remaining changes
 
-If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own line and explain what is blocking you.`;
+Output ONLY valid JSON conforming to the schema at: ${config.projectDir}/resolve-conflict.schema.json`;
 
       db.updateTicketField(ticket.id, 'status', 'running');
       try {
@@ -1057,7 +1056,13 @@ If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own lin
             .split('\n').map(s => s.trim()).filter(Boolean);
         } catch {}
 
-        if (remainingConflicts.length === 0 && !resolveOutput.includes('UNRESOLVABLE')) {
+        let coderResolved = false;
+        try {
+          const coderResult = JSON.parse(resolveOutput);
+          coderResolved = coderResult.resolved === true;
+        } catch { /* fall back to string check */ }
+        if (!coderResolved) coderResolved = remainingConflicts.length === 0 && !resolveOutput.includes('UNRESOLVABLE');
+        if (remainingConflicts.length === 0 && coderResolved) {
           // Coder resolved — try to continue rebase
           db.updateTicketField(ticket.id, 'status', 'running');
           try {
