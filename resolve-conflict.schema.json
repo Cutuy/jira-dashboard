@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Conflict Resolution Output",
+  "description": "Output after attempting to resolve git rebase conflicts for a ticket.",
+  "type": "object",
+  "properties": {
+    "resolved": {
+      "type": "boolean",
+      "description": "Whether all conflicts were successfully resolved. Set to true only after editing conflicted files, running git add on them, and running git rebase --continue."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Brief summary of what was done to resolve the conflicts — which side was kept or how files were merged"
+    },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of files that were modified to resolve conflicts"
+    },
+    "reason": {
+      "type": "string",
+      "description": "If resolved is false, explain why the conflicts could not be resolved and what information is needed"
+    }
+  },
+  "required": ["resolved"]
+}
