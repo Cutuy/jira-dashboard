@@ -38,6 +38,8 @@ interface T {
   id: string; title: string; content: string; stage: string; status?: string
   plan: string | null; worktree_path: string | null; branch_name: string | null
   commit_sha: string | null; review_feedback: string | null
+  estimated_complexity?: string | null
+  plan_notes?: string | null
   questions: Q[]; activity: A[]; created_at: string; updated_at: string
   total_cpu?: string; total_elapsed?: string
   stage_resources?: SR
@@ -1368,10 +1370,20 @@ export default function App() {
                 {sel.stage === 'implementation' && (
                   <>
                     {sel.plan && (
-                      <Section title="Implementation Plan">
+                      <Section
+                        title="Implementation Plan"
+                        hint={
+                          sel.estimated_complexity
+                            ? `complexity: ${sel.estimated_complexity}`
+                            : undefined
+                        }
+                      >
                         <pre className="rounded-md bg-zinc-900 text-zinc-100 p-3.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
 {sel.plan}
                         </pre>
+                        {sel.plan_notes && (
+                          <p className="t-small text-ink-3 mt-2 italic">{sel.plan_notes}</p>
+                        )}
                       </Section>
                     )}
                     {sel.status === 'running' ? (
@@ -1573,10 +1585,20 @@ export default function App() {
                       </div>
                     </div>
                     {sel.plan && (
-                      <Section title="Implementation Plan">
+                      <Section
+                        title="Implementation Plan"
+                        hint={
+                          sel.estimated_complexity
+                            ? `complexity: ${sel.estimated_complexity}`
+                            : undefined
+                        }
+                      >
                         <pre className="rounded-md bg-zinc-900 text-zinc-100 p-3.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
 {sel.plan}
                         </pre>
+                        {sel.plan_notes && (
+                          <p className="t-small text-ink-3 mt-2 italic">{sel.plan_notes}</p>
+                        )}
                       </Section>
                     )}
                     {sel.latest_test && (
