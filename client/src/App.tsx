@@ -44,6 +44,7 @@ interface T {
   total_cpu?: string; total_elapsed?: string
   stage_resources?: SR
   latest_test?: TestRun | null
+  behind_count?: number | null
 }
 
 type Sug = { id: string; title: string; content: string }
@@ -662,7 +663,7 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
-interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean }
+interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; branchDefault?: string }
 
 export default function App() {
   const [tickets, setTickets] = useState<T[]>([])
@@ -1315,6 +1316,52 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Generic worktree info — shown for any stage with an active worktree */}
+                {sel.worktree_path && (
+                  <Section title="Worktree">
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 t-mono-12">
+                      <dt className="t-meta text-ink-2 uppercase tracking-wider self-center">Path</dt>
+                      <dd className="text-ink-1 break-all">{sel.worktree_path}</dd>
+                      <dt className="t-meta text-ink-2 uppercase tracking-wider self-center">Branch</dt>
+                      <dd className="text-ink-1 break-all">{sel.branch_name || '—'}</dd>
+                    </dl>
+                    {sel.behind_count !== null && sel.behind_count !== undefined && (
+                      <div className="mt-2">
+                        {sel.behind_count === 0 ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 px-2 py-0.5 t-meta font-medium">
+                            Up to date with {cfg.branchDefault || 'main'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-2 py-0.5 t-meta font-medium">
+                            {sel.behind_count} commit{sel.behind_count === 1 ? '' : 's'} behind {cfg.branchDefault || 'main'}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-3 flex gap-2 flex-wrap">
+                      <a
+                        href={`vscode://vscode-remote/ssh-remote+${cfg.remoteHost}${sel.worktree_path}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-border hover:bg-bg t-small text-ink-2"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open in VSCode
+                      </a>
+                      <a
+                        href={`cursor://ssh-remote+${cfg.remoteHost}${sel.worktree_path}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md ring-1 ring-border hover:bg-bg t-small text-ink-2"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open in Cursor
+                      </a>
+                      <Btn variant="outline" size="sm" onClick={() => viewDiff(sel.id)}>
+                        View Diff
+                      </Btn>
+                    </div>
+                  </Section>
+                )}
+
                 {/* Clarification — running (generating questions / processing answers) */}
                 {sel.stage === 'clarification' && sel.status === 'running' && (
                   <Section title="Live status">
@@ -1664,6 +1711,14 @@ export default function App() {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto sm:ml-auto">
             {sel.stage === 'clarification' && (
               <>
+                {sel.worktree_path && sel.status !== 'running' && (
+                  <Btn variant="outline" onClick={() => rebaseTicket(sel.id)} disabled={rebaseLoading}>
+                    {rebaseLoading
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <GitBranch className="h-3.5 w-3.5" />}
+                    {rebaseLoading ? 'Rebasing…' : 'Rebase'}
+                  </Btn>
+                )}
                 {sel.questions.length === 0 && (
                   <Btn variant="outline" onClick={() => clarify(sel.id)}>
                     <RefreshCw className="h-3.5 w-3.5" /> Retry
@@ -1682,6 +1737,14 @@ export default function App() {
                   </Btn>
                 )}
               </>
+            )}
+            {sel.stage === 'ready' && sel.worktree_path && sel.status !== 'running' && (
+              <Btn variant="outline" onClick={() => rebaseTicket(sel.id)} disabled={rebaseLoading}>
+                {rebaseLoading
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <GitBranch className="h-3.5 w-3.5" />}
+                {rebaseLoading ? 'Rebasing…' : 'Rebase'}
+              </Btn>
             )}
             {sel.stage === 'review' && (
               <>

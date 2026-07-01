@@ -257,6 +257,16 @@ function assertWorktreeClean(ticket, { stage, allow = false } = {}) {
   }
 }
 
+function getBranchStaleness(worktreePath) {
+  if (!worktreePath || !fs.existsSync(path.join(worktreePath, '.git'))) return null;
+  try {
+    const count = runGit(`rev-list --count HEAD..${config.branchDefault}`, worktreePath);
+    return parseInt(count, 10) || 0;
+  } catch {
+    return null;
+  }
+}
+
 function ensureWorktreesDir() {
   if (!fs.existsSync(config.worktreesDir)) {
     fs.mkdirSync(config.worktreesDir, { recursive: true });
@@ -499,6 +509,7 @@ app.get('/api/config', (req, res) => {
     remoteHost: config.remoteHost,
     explorer: config.explorer,
     testEnabled: config.test.enabled,
+    branchDefault: config.branchDefault,
   });
 });
 
@@ -514,7 +525,8 @@ function getTicketResponse(id) {
   if (!t) return null;
   const stageResources = db.getStageResources(id);
   const latestTest = db.getLatestTestRun(id);
-  return { ...t, stage_resources: stageResources, latest_test: latestTest };
+  const behindCount = getBranchStaleness(t.worktree_path);
+  return { ...t, stage_resources: stageResources, latest_test: latestTest, behind_count: behindCount };
 }
 
 app.get('/api/tickets/:id', (req, res) => {
@@ -963,7 +975,7 @@ app.post('/api/tickets/:id/feedback', async (req, res) => {
 app.post('/api/tickets/:id/rebase', async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-  if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (!['clarification', 'ready', 'review'].includes(ticket.stage)) return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
   if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
   if (!ticket.worktree_path || !fs.existsSync(path.join(ticket.worktree_path, '.git'))) {
     return res.status(400).json({ error: 'No worktree available for rebase' });
