@@ -81,6 +81,10 @@ try { db.exec(`ALTER TABLE questions ADD COLUMN options TEXT`); } catch {}
 // Migration: add stage column to activity for per-stage resource tracking
 try { db.exec(`ALTER TABLE activity ADD COLUMN stage TEXT`); } catch {}
 
+// Migration: add estimated_complexity and notes columns to tickets
+try { db.exec(`ALTER TABLE tickets ADD COLUMN estimated_complexity TEXT`); } catch {}
+try { db.exec(`ALTER TABLE tickets ADD COLUMN plan_notes TEXT`); } catch {}
+
 // ── Prepared statements ───────────────────────────────────
 const stmts = {
   // Tickets
@@ -91,11 +95,11 @@ const stmts = {
     INSERT INTO tickets (id, title, content, stage, plan, worktree_path,
       branch_name, commit_sha, review_feedback, status, ocode_session,
       total_cpu, total_elapsed, token_cost, token_input, token_output,
-      created_at, updated_at)
+      estimated_complexity, plan_notes, created_at, updated_at)
     VALUES (@id, @title, @content, @stage, @plan, @worktree_path,
       @branch_name, @commit_sha, @review_feedback, @status, @ocode_session,
       @total_cpu, @total_elapsed, @token_cost, @token_input, @token_output,
-      @created_at, @updated_at)
+      @estimated_complexity, @plan_notes, @created_at, @updated_at)
   `),
   updateTicket: db.prepare(`
     UPDATE tickets SET
@@ -105,7 +109,9 @@ const stmts = {
       status = @status, ocode_session = @ocode_session,
       total_cpu = @total_cpu, total_elapsed = @total_elapsed,
       token_cost = @token_cost, token_input = @token_input,
-      token_output = @token_output, updated_at = @updated_at
+      token_output = @token_output,
+      estimated_complexity = @estimated_complexity,
+      plan_notes = @plan_notes, updated_at = @updated_at
     WHERE id = @id
   `),
   updateTicketField: (field) => db.prepare(`
@@ -231,6 +237,8 @@ function createTicket(data) {
     token_cost: null,
     token_input: null,
     token_output: null,
+    estimated_complexity: null,
+    plan_notes: null,
   };
   const t = { ...defaults, ...data };
   stmts.insertTicket.run(t);
@@ -485,6 +493,8 @@ function migrateFromJSON() {
         content: t.content || '',
         stage: t.stage || 'clarification',
         plan: t.plan || null,
+        estimated_complexity: t.estimated_complexity || null,
+        plan_notes: t.plan_notes || null,
         worktree_path: t.worktree_path || null,
         branch_name: t.branch_name || null,
         commit_sha: t.commit_sha || null,

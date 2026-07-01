@@ -87,6 +87,26 @@ function ticketId(title) {
   return slug ? `${slug}-${suffix}` : suffix;
 }
 
+// ── Plan text formatter ────────────────────────────────────
+// The `plan` field from the AI evaluate response may be a JSON
+// object/string rather than plain text. Normalize it to readable text.
+function formatPlanText(plan) {
+  if (!plan) return '';
+  if (typeof plan === 'object') {
+    return plan.plan || plan.description || plan.summary || JSON.stringify(plan, null, 2);
+  }
+  if (typeof plan === 'string') {
+    try {
+      const parsed = JSON.parse(plan);
+      if (typeof parsed === 'string') return parsed;
+      return parsed.plan || parsed.description || parsed.summary || JSON.stringify(parsed, null, 2);
+    } catch {
+      return plan;
+    }
+  }
+  return String(plan);
+}
+
 // ── Coder runner (thin wrapper) ───────────────────────────
 async function runCoder(ticketId, prompt, opts = {}) {
   const ticket = db.getTicket(ticketId);
@@ -567,14 +587,21 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
       return res.json({ clarified: false, ...db.getTicket(ticket.id) });
     }
 
-    db.updateTicket(ticket.id, { plan: parsed.plan || '', review_feedback: null, stage: 'implementation' });
+    const planText = formatPlanText(parsed.plan);
+    db.updateTicket(ticket.id, {
+      plan: planText,
+      estimated_complexity: parsed.estimated_complexity || null,
+      plan_notes: parsed.notes || null,
+      review_feedback: null,
+      stage: 'implementation',
+    });
     db.logActivity(ticket.id, 'clarified_plan', parsed.notes || '');
     if (parsed.files_to_modify) {
       db.logActivity(ticket.id, 'files_affected', parsed.files_to_modify.join(', '));
     }
 
     const finalTicket = db.getTicket(ticket.id);
-    res.json({ clarified: true, plan: finalTicket.plan, notes: parsed.notes, ticket: finalTicket });
+    res.json({ clarified: true, plan: planText, notes: parsed.notes, ticket: finalTicket });
   } catch (err) {
     db.logActivity(ticket.id, 'answer_error', err.message);
     db.updateTicketField(ticket.id, 'status', 'idle');
