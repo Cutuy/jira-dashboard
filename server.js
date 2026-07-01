@@ -95,6 +95,7 @@ async function runCoder(ticketId, prompt, opts = {}) {
     title: `ticket-${ticketId}`,
     timeout: opts.timeout || config.coder.timeouts.clarify,
     onProgress: opts.onProgress,
+    cwd: opts.cwd,
   });
 }
 
@@ -128,14 +129,14 @@ function commitWorktreeChanges(worktreePath, ticketId, message, { partial = fals
   const tag = partial ? 'commit_partial' : 'commit';
   try {
     const status = runGit(`status --porcelain`, worktreePath);
-    let sha;
-    if (status) {
-      runGit(`add -A`, worktreePath);
-      runGit(`commit -m "${message.replace(/"/g, '')}"`, worktreePath);
-      sha = runGit(`rev-parse HEAD`, worktreePath);
-    } else {
-      sha = runGit(`rev-parse HEAD`, worktreePath);
+    if (!status) {
+      // No changes to commit. Don't lie about a phantom commit.
+      db.logActivity(ticketId, 'commit_skipped', 'no uncommitted changes in worktree');
+      return null;
     }
+    runGit(`add -A`, worktreePath);
+    runGit(`commit -m "${message.replace(/"/g, '')}"`, worktreePath);
+    const sha = runGit(`rev-parse HEAD`, worktreePath);
     db.logActivity(ticketId, tag, `${sha.slice(0, 7)}: ${message.replace(/"/g, '')}`);
     return sha;
   } catch (err) {
@@ -541,7 +542,7 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
         sseBroadcast(ticket.id, 'stdout', { text: line });
       }
     };
-    const output = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress });
+    const output = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress, cwd: config.projectDir });
     db.updateTicketField(ticket.id, 'status', 'idle');
 
     let parsed;
@@ -873,6 +874,7 @@ If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own lin
             db.logActivity(ticket.id, 'rebase_coder_progress', line.slice(0, 200));
             sseBroadcast(ticket.id, 'stdout', { text: `[resolve] ${line}` });
           },
+          cwd: ticket.worktree_path,
         });
 
         // Check if conflicts remain
@@ -1208,7 +1210,7 @@ async function generateSuggestions(retries = 3) {
       );
 
       const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nRead vision + project root at: ${contextFile}`;
-      const output = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest });
+      const output = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest, cwd: config.projectDir });
       const jsonMatch = output.match(/\{[\s\S]*\}/);
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
       if (parsed && Array.isArray(parsed.tickets)) {

@@ -34,9 +34,19 @@ function getLastSessionId() {
   return store.lastSessionId;
 }
 
+function buildSpawnOptions(backend, opts = {}) {
+  const { timeout = 180_000 } = opts;
+  return {
+    cwd: opts.cwd || config.projectDir,
+    env: { ...process.env, ...backend.buildEnv() },
+    timeout,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  };
+}
+
 function run(prompt, opts = {}) {
   const backend = resolveBackend();
-  const { sessionId, title, timeout = 180_000, onProgress } = opts;
+  const { sessionId, title, onProgress } = opts;
 
   if (backend.runDummy) {
     return backend.runDummy(prompt);
@@ -44,14 +54,9 @@ function run(prompt, opts = {}) {
 
   return new Promise((resolve, reject) => {
     const args = backend.buildArgs(prompt, sessionId, title);
-    const env = { ...process.env, ...backend.buildEnv() };
+    const spawnOpts = buildSpawnOptions(backend, opts);
 
-    const proc = spawn(config.coder.bin, args, {
-      cwd: config.projectDir,
-      env,
-      timeout,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const proc = spawn(config.coder.bin, args, spawnOpts);
 
     let stdout = '';
     let stderr = '';
@@ -102,4 +107,4 @@ function run(prompt, opts = {}) {
   });
 }
 
-module.exports = { run, getStats, getLastSessionId };
+module.exports = { run, getStats, getLastSessionId, buildSpawnOptions };
