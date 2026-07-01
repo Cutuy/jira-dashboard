@@ -1,6 +1,7 @@
 const monitors = {
   linux: require('./linux'),
   darwin: require('./darwin'),
+  win32: require('./win32'),
 };
 
 function createResourceMonitor(pid, onProgress) {

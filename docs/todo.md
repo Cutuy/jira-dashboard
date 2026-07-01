@@ -31,7 +31,7 @@ Tested: local + opencode + linux only.
 
 ## Platform Support
 
-- Only Linux systemd for auto-start. Need macOS launchd plist, Windows schtasks.
+- Linux systemd, macOS launchd, and Windows schtasks all supported.
 - No Docker / containerized setup (native module needs C++ build tools).
 
 ## Features

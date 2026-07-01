@@ -1,11 +1,12 @@
 const services = {
   linux: require('./linux'),
   darwin: require('./darwin'),
+  win32: require('./win32'),
 };
 
 function getImpl() {
   const impl = services[process.platform];
-  if (!impl) throw new Error(`Unsupported platform: ${process.platform} (only linux/darwin supported)`);
+  if (!impl) throw new Error(`Unsupported platform: ${process.platform} (only linux/darwin/win32 supported)`);
   return impl;
 }
 
