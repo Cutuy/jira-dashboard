@@ -164,6 +164,12 @@ body {
   *::-webkit-scrollbar { width: 0; height: 0; }
 }
 
+/* Highlight pulse animation for attention-needing tickets */
+@keyframes attention-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(59,130,246,0.3); }
+  50% { box-shadow: 0 0 12px rgba(59,130,246,0.5); }
+}
+
 /* Subtle focus ring — single source */
 *:focus-visible {
   outline: 2px solid var(--color-brand);

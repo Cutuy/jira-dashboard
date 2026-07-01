@@ -134,14 +134,14 @@ function IconBtn({ children, label, ...rest }: React.ButtonHTMLAttributes<HTMLBu
 /* ─────────────────────────────────────────────────────────
    Card
    ───────────────────────────────────────────────────────── */
-function TicketCard({ t, onOpen, loading }: { t: T; onOpen: (id: string) => void; loading?: boolean }) {
+function TicketCard({ t, onOpen, loading, highlighted }: { t: T; onOpen: (id: string) => void; loading?: boolean; highlighted?: boolean }) {
   const meta = STAGE_META[t.stage as Stage]
   const running = t.status === 'running'
   const qaCount = t.questions?.length || 0
   return (
     <button
       onClick={() => { if (!loading) onOpen(t.id) }}
-      className={`group w-full text-left bg-surface rounded-lg ring-1 ring-border hover:ring-ink-3 hover:shadow-sm active:bg-bg transition-all p-3.5 flex flex-col gap-2.5 ${loading ? 'opacity-50 pointer-events-none' : ''}`}
+      className={`group w-full text-left bg-surface rounded-lg ring-1 hover:ring-ink-3 hover:shadow-sm active:bg-bg transition-all p-3.5 flex flex-col gap-2.5 ${loading ? 'opacity-50 pointer-events-none' : ''} ${highlighted ? 'ring-2 ring-blue-500/60 animate-[attention-pulse_2s_ease-in-out_infinite]' : 'ring-border'}`}
     >
       <div className="flex items-center justify-between">
         <span className="t-mono-11 text-ink-3 truncate">{t.id}</span>
@@ -693,10 +693,29 @@ export default function App() {
   const [rebaseLoading, setRebaseLoading] = useState(false)
   const poll = useRef<EventSource>()
   const lastUpd = useRef('')
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
+  const prevTicketsRef = useRef<Map<string, T>>(new Map())
 
   const load = useCallback(async () => {
     try {
       const d = await fetchJSON<{ tickets: T[] }>('/api/tickets')
+      const prev = prevTicketsRef.current
+      const changed: string[] = []
+      for (const t of d.tickets) {
+        const old = prev.get(t.id)
+        if (old && old.stage !== t.stage) changed.push(t.id)
+      }
+      prevTicketsRef.current = new Map(d.tickets.map(t => [t.id, t]))
+      if (changed.length > 0) {
+        if (selRef.current === null) {
+          openRef.current(changed[0])
+          if (changed.length > 1) {
+            setHighlightedIds(prev => { const next = new Set(prev); for (let i = 1; i < changed.length; i++) next.add(changed[i]); return next })
+          }
+        } else {
+          setHighlightedIds(prev => { const next = new Set(prev); for (const id of changed) next.add(id); return next })
+        }
+      }
       setTickets(d.tickets)
     } catch {}
   }, [])
@@ -759,6 +778,7 @@ export default function App() {
       if (ac.signal.aborted) return
       abort.current = null; setLoadingId(null)
       setSel(t)
+      setHighlightedIds(prev => { const next = new Set(prev); next.delete(id); return next })
       setTickets(p => p.map(x => (x.id === id ? t : x)))
       lastUpd.current = t.updated_at
       setAnswers({}); setDiff(''); setDiffFiles([]); setFeedback(''); setTodoItems([]); setStdoutLines([])
@@ -1184,7 +1204,7 @@ export default function App() {
                       No tickets
                     </div>
                   )}
-                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} />)}
+                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} highlighted={highlightedIds.has(t.id)} />)}
                 </div>
               </section>
             )
