@@ -220,6 +220,32 @@ try {
   });
 })();
 
+// ── Git-aware project discovery (worktree case) ────────────
+(function testGitAwareFromWorktree() {
+  // Build a temp git repo + worktree, chdir into the worktree, and verify
+  // projectDir resolves to the main repo (not the worktree, not cwd).
+  // This is the self-host / dogfood case the walk-up heuristic gets wrong.
+  const { execSync } = require('child_process');
+  const os = require('os');
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-cfg-gt-'));
+  const wtDir = path.join(tmpRoot, '.worktrees', 'feature');
+  const origCwd = process.cwd();
+  try {
+    execSync('git init -q', { cwd: tmpRoot });
+    execSync('git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: tmpRoot });
+    fs.mkdirSync(path.dirname(wtDir), { recursive: true });
+    execSync(`git worktree add -q ${wtDir} -b feature`, { cwd: tmpRoot });
+
+    process.chdir(wtDir);
+    const cfg = reloadConfig();
+    assert.strictEqual(cfg.projectDir, tmpRoot, 'projectDir should be the main repo (git-aware) when in a worktree');
+    console.log('PASS: git-aware discovery resolves worktree → main repo');
+  } finally {
+    process.chdir(origCwd);
+    try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch {}
+  }
+})();
+
 console.log('\n✅ All config tests passed\n');
 
 } finally {
