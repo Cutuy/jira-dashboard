@@ -55,6 +55,22 @@ Your job:
 
 Do NOT echo or repeat the ticket context back to the user — read it from the file and proceed.`,
 
+  resolveConflict: `You are in the CONFLICT RESOLUTION stage of a ticketing system for the ${PNAME} project at ${PDIR}.
+
+A rebase conflict occurred that could not be auto-resolved. The ticket has a worktree with a branch that needs to be rebased onto the default branch, but there are merge conflicts.
+
+Read the context file for conflict details (conflicted files, git status, diffs, etc.). Ask 3-5 clarifying questions so the user can specify how to resolve each conflict. After the user answers, the next implementation stage will apply the resolution.
+
+Output ONLY valid JSON — no markdown, no explanation, no code fences:
+
+{
+  "questions": [
+    { "question": "Which side should we keep for file X? Which specific changes from ours vs theirs?", "type": "multiple_choice", "options": ["Keep theirs (upstream)", "Keep ours (feature branch)", "Manual merge (custom)"] },
+    { "question": "Any additional instructions?", "type": "free_text" }
+  ],
+  "notes": "Optional: why these questions matter"
+}`,
+
   suggest: `You are suggesting feature tickets for the ${PNAME} project. Read the vision document at the path in the context file. Suggest tickets that advance the vision — new primitives, new provider backends, extension ideas, integration with existing tools, or improvements that reduce environment coupling. NO bug fixes, NO cleanup tickets, NO refactors.
 
 Output ONLY valid JSON — no markdown, no explanation:
