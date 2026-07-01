@@ -5,7 +5,8 @@ const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
 import {
   Loader2, Link as LinkIcon, ExternalLink, Play, Shield,
-  RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check, Sun, Moon, Monitor
+  RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check, Sun, Moon, Monitor,
+  GitBranch
 } from 'lucide-react'
 
 /* ─────────────────────────────────────────────────────────
@@ -689,6 +690,7 @@ export default function App() {
   const [copied, setCopied] = useState(false)
   const [testExpanded, setTestExpanded] = useState(false)
   const [testReRunning, setTestReRunning] = useState(false)
+  const [rebaseLoading, setRebaseLoading] = useState(false)
   const poll = useRef<EventSource>()
   const lastUpd = useRef('')
 
@@ -967,6 +969,22 @@ export default function App() {
       setSel(d.ticket); setTickets(p => p.map(x => (x.id === id ? d.ticket : x)))
       lastUpd.current = d.ticket.updated_at
     } catch (e: any) { setError(e.message) } finally { setBusy(false) }
+  }
+
+  async function rebaseTicket(id: string) {
+    setRebaseLoading(true)
+    try {
+      const d: any = await fetchJSON(`/api/tickets/${id}/rebase`, { method: 'POST' })
+      if (d.ticket) {
+        setSel(d.ticket); setTickets(p => p.map(x => (x.id === id ? d.ticket : x)))
+        lastUpd.current = d.ticket.updated_at
+      }
+      if (!d.success && d.error) {
+        setError(d.ticket?.stage === 'clarification'
+          ? 'Rebase conflicts could not be resolved — ticket moved to clarification'
+          : d.error)
+      }
+    } catch (e: any) { setError(e.message) } finally { setRebaseLoading(false) }
   }
 
   async function viewDiff(id: string) {
@@ -1617,6 +1635,12 @@ export default function App() {
               <>
                 <Btn variant="outline" onClick={() => impl(sel.id)}>
                   <RefreshCw className="h-3.5 w-3.5" /> Continue
+                </Btn>
+                <Btn variant="outline" onClick={() => rebaseTicket(sel.id)} disabled={rebaseLoading || busy}>
+                  {rebaseLoading
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <GitBranch className="h-3.5 w-3.5" />}
+                  {rebaseLoading ? 'Rebasing…' : 'Rebase'}
                 </Btn>
                 <Btn variant="secondary" onClick={sendFeedback} disabled={busy || !feedback.trim()}>
                   {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
