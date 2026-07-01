@@ -13,7 +13,7 @@ function reloadPrompts() {
 // ── All stages have prompts ────────────────────────────────
 (function testAllStagesPresent() {
   const p = reloadPrompts();
-  const stages = ['clarify', 'evaluate', 'implement', 'suggest'];
+  const stages = ['clarify', 'evaluate', 'implement', 'resolveConflict', 'suggest'];
   for (const s of stages) {
     assert.ok(typeof p[s] === 'string', `${s} prompt should be a string`);
     assert.ok(p[s].length > 50, `${s} prompt should be substantial`);

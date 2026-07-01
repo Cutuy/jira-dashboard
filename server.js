@@ -119,6 +119,84 @@ async function runCoder(ticketId, prompt, opts = {}) {
   });
 }
 
+// ── Rebase conflict clarification ──────────────────────────
+// When the LLM can't auto-resolve a rebase conflict, generate
+// clarifying questions so the user can guide the resolution.
+async function generateConflictClarification(ticket, conflictFiles, gitStatus, resolveOutput) {
+  const conflictDetails = [
+    `Default branch: ${config.branchDefault}`,
+    `Conflicted files:\n${conflictFiles.join('\n') || '(unknown)'}`,
+    '',
+    'Git status:',
+    '```',
+    gitStatus || '(unavailable)',
+    '```',
+  ];
+  if (resolveOutput) {
+    conflictDetails.push('', 'Coder output from auto-resolve attempt:', '```', resolveOutput.slice(-2000), '```');
+  }
+
+  const ctxSections = [
+    { title: 'Ticket title', body: ticket.title },
+    { title: 'Ticket description', body: ticket.content },
+    { title: 'Rebase conflict details', body: conflictDetails.join('\n') },
+  ];
+
+  const contextFile = writeTicketContext(ticket.id, ctxSections);
+  const prompt = `${prompts.resolveConflict}\n\nRead full ticket context at: ${contextFile}`;
+
+  try {
+    db.clearStageActivity(ticket.id, 'clarification');
+    db.logActivity(ticket.id, 'conflict_clarify_start');
+    db.updateTicketField(ticket.id, 'status', 'running');
+    const onProgress = (line) => {
+      if (line.startsWith('[resource] ')) {
+        const detail = line.slice(11);
+        db.logActivity(ticket.id, 'resource', detail, 'clarification');
+        sseBroadcast(ticket.id, 'resource', { detail });
+      } else {
+        sseBroadcast(ticket.id, 'stdout', { text: `[conflict] ${line}` });
+      }
+    };
+    const output = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress });
+    captureSessionId(ticket.id);
+    db.updateTicketField(ticket.id, 'status', 'idle');
+
+    let parsed;
+    try {
+      const jsonMatch = output.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { questions: [] };
+    } catch {
+      parsed = { questions: [] };
+    }
+
+    const questions = parsed.questions || [];
+    db.deleteQuestionsForTicket(ticket.id);
+    for (const q of questions) {
+      if (typeof q === 'string') {
+        db.addQuestion(ticket.id, q, null, 1, 'free_text', null);
+      } else {
+        const opts = q.options && Array.isArray(q.options) ? JSON.stringify(q.options) : null;
+        db.addQuestion(ticket.id, q.question, null, 1, q.type || 'free_text', opts);
+      }
+    }
+    if (questions.length === 0) {
+      db.addQuestion(ticket.id,
+        `How should the rebase conflict be resolved? Conflicted files: ${conflictFiles.join(', ') || '(unknown)'}`,
+        null, 1, 'free_text', null);
+    }
+    return questions;
+  } catch (err) {
+    db.logActivity(ticket.id, 'conflict_clarify_error', err.message);
+    db.updateTicketField(ticket.id, 'status', 'idle');
+    db.deleteQuestionsForTicket(ticket.id);
+    db.addQuestion(ticket.id,
+      `How should the rebase conflict be resolved? Conflicted files: ${conflictFiles.join(', ') || '(unknown)'}`,
+      null, 1, 'free_text', null);
+    return [];
+  }
+}
+
 // Capture session ID after first run
 function captureSessionId(ticketId) {
   const coderMod = require('./coder');
@@ -929,16 +1007,18 @@ If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own lin
           }
         }
 
-        // Coder couldn't resolve — abort rebase, go back to clarification
+        // Coder couldn't resolve — abort rebase, generate conflict clarification questions
         try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
         if (hadStash) { try { runGit(`stash pop`, ticket.worktree_path); } catch {} }
 
+        db.logActivity(ticket.id, 'rebase_coder_unresolved', `Coder could not resolve conflicts in ${conflictFiles.length} files`);
+        await generateConflictClarification(ticket, conflictFiles, gitStatus, resolveOutput);
+
         const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts in:\n${
           conflictFiles.join('\n') || '(unknown files)'
-        }\n\nThe rebase conflict resolver could not resolve these automatically. Please review the conflicts manually in the worktree and resolve them.`;
+        }\n\nThe rebase conflict resolver could not resolve these automatically. Please answer the clarification questions to guide resolution.`;
         db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null });
-        db.updateTicketField(ticket.id, 'status', 'idle');
-        sseBroadcast(ticket.id, 'stdout', { text: 'Rebase conflicts could not be resolved — ticket moved to clarification' });
+        sseBroadcast(ticket.id, 'stdout', { text: 'Rebase conflicts could not be resolved — ticket moved to clarification with conflict questions' });
 
         return res.json({
           success: false,
@@ -946,14 +1026,14 @@ If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own lin
           ticket: db.getTicket(ticket.id),
         });
       } catch (coderErr) {
-        // Coder itself crashed/errored
+        // Coder itself crashed/errored — generate conflict clarification questions
         try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
         if (hadStash) { try { runGit(`stash pop`, ticket.worktree_path); } catch {} }
 
         db.logActivity(ticket.id, 'rebase_coder_error', coderErr.message.slice(0, 200));
-        db.updateTicketField(ticket.id, 'status', 'idle');
+        await generateConflictClarification(ticket, conflictFiles, gitStatus, null);
 
-        const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease review the conflicts in the worktree manually.`;
+        const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease answer the clarification questions to guide resolution.`;
         db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null });
 
         return res.json({
