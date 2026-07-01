@@ -793,6 +793,154 @@ app.post('/api/tickets/:id/feedback', async (req, res) => {
   res.json({ success: true, message: 'Ticket moved back to clarification', ticket: db.getTicket(ticket.id) });
 });
 
+// ── Rebase (standalone button in review stage) ────────────
+app.post('/api/tickets/:id/rebase', async (req, res) => {
+  const ticket = db.getTicket(req.params.id);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
+  if (!ticket.worktree_path || !fs.existsSync(path.join(ticket.worktree_path, '.git'))) {
+    return res.status(400).json({ error: 'No worktree available for rebase' });
+  }
+
+  db.logActivity(ticket.id, 'rebase_start', `Rebasing onto ${config.branchDefault}`);
+  db.updateTicketField(ticket.id, 'status', 'running');
+  sseBroadcast(ticket.id, 'stdout', { text: `Rebasing onto ${config.branchDefault}…` });
+
+  try {
+    // Abort any stale in-progress rebase
+    try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+
+    // Stash uncommitted changes before rebase
+    let hadStash = false;
+    try {
+      const status = runGit(`status --porcelain`, ticket.worktree_path);
+      if (status) {
+        runGit(`stash --include-untracked`, ticket.worktree_path);
+        hadStash = true;
+      }
+    } catch {}
+
+    // Attempt the rebase
+    try {
+      runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
+      if (hadStash) { try { runGit(`stash pop`, ticket.worktree_path); } catch {} }
+
+      const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+      db.logActivity(ticket.id, 'rebase_done', `Rebased onto ${config.branchDefault}: ${newSha.slice(0, 7)}`);
+      db.updateTicketField(ticket.id, 'status', 'idle');
+      db.updateTicketField(ticket.id, 'commit_sha', newSha);
+      sseBroadcast(ticket.id, 'stdout', { text: `Rebase complete: ${newSha.slice(0, 7)}` });
+      return res.json({ success: true, commit_sha: newSha, ticket: db.getTicket(ticket.id) });
+    } catch (rebaseErr) {
+      // Rebase hit conflicts — collect details
+      let conflictFiles = [];
+      let gitStatus = '';
+      try {
+        gitStatus = runGit(`status`, ticket.worktree_path);
+        conflictFiles = runGit(`diff --name-only --diff-filter=U`, ticket.worktree_path)
+          .split('\n').map(s => s.trim()).filter(Boolean);
+      } catch {}
+
+      db.logActivity(ticket.id, 'rebase_conflict', `Conflicts in ${conflictFiles.length} files`);
+      db.updateTicketField(ticket.id, 'status', 'idle');
+
+      // Build prompt for the coder to resolve conflicts
+      const worktreePath = ticket.worktree_path;
+      const resolvePrompt = `You are resolving git rebase conflicts for a ticket in the ${config.projectName} project.
+
+The worktree at ${worktreePath} has conflicts after \`git rebase ${config.branchDefault}\`.
+
+Git status:
+${gitStatus}
+
+Conflicted files:
+${conflictFiles.join('\n')}
+
+Your job:
+1. Read the conflicted files
+2. Resolve the merge conflicts by editing the files
+3. Run \`git add\` on the resolved files to mark them as resolved
+4. Run \`git rebase --continue\` to complete the rebase
+5. Commit any remaining changes
+
+If you CANNOT resolve the conflicts, output the word UNRESOLVABLE on its own line and explain what is blocking you.`;
+
+      try {
+        const resolveOutput = await runCoder(ticket.id, resolvePrompt, {
+          timeout: config.coder.timeouts.implement,
+          onProgress: (line) => {
+            db.logActivity(ticket.id, 'rebase_coder_progress', line.slice(0, 200));
+            sseBroadcast(ticket.id, 'stdout', { text: `[resolve] ${line}` });
+          },
+        });
+
+        // Check if conflicts remain
+        let remainingConflicts = [];
+        try {
+          remainingConflicts = runGit(`diff --name-only --diff-filter=U`, ticket.worktree_path)
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        } catch {}
+
+        if (remainingConflicts.length === 0 && !resolveOutput.includes('UNRESOLVABLE')) {
+          // Coder resolved — try to continue rebase
+          db.updateTicketField(ticket.id, 'status', 'running');
+          try {
+            runGit(`rebase --continue`, ticket.worktree_path);
+            if (hadStash) { try { runGit(`stash pop`, ticket.worktree_path); } catch {} }
+            const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+            db.logActivity(ticket.id, 'rebase_done', `Coder resolved conflicts. Rebased onto ${config.branchDefault}: ${newSha.slice(0, 7)}`);
+            db.updateTicketField(ticket.id, 'status', 'idle');
+            db.updateTicketField(ticket.id, 'commit_sha', newSha);
+            sseBroadcast(ticket.id, 'stdout', { text: `Rebase complete after conflict resolution: ${newSha.slice(0, 7)}` });
+            return res.json({ success: true, commit_sha: newSha, note: 'Coder resolved conflicts', ticket: db.getTicket(ticket.id) });
+          } catch (continueErr) {
+            db.logActivity(ticket.id, 'rebase_continue_failed', continueErr.message.slice(0, 200));
+            db.updateTicketField(ticket.id, 'status', 'idle');
+          }
+        }
+
+        // Coder couldn't resolve — abort rebase, go back to clarification
+        try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+        if (hadStash) { try { runGit(`stash pop`, ticket.worktree_path); } catch {} }
+
+        const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts in:\n${
+          conflictFiles.join('\n') || '(unknown files)'
+        }\n\nThe rebase conflict resolver could not resolve these automatically. Please review the conflicts manually in the worktree and resolve them.`;
+        db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null });
+        db.updateTicketField(ticket.id, 'status', 'idle');
+        sseBroadcast(ticket.id, 'stdout', { text: 'Rebase conflicts could not be resolved — ticket moved to clarification' });
+
+        return res.json({
+          success: false,
+          error: 'Rebase conflicts could not be resolved automatically',
+          ticket: db.getTicket(ticket.id),
+        });
+      } catch (coderErr) {
+        // Coder itself crashed/errored
+        try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+        if (hadStash) { try { runGit(`stash pop`, ticket.worktree_path); } catch {} }
+
+        db.logActivity(ticket.id, 'rebase_coder_error', coderErr.message.slice(0, 200));
+        db.updateTicketField(ticket.id, 'status', 'idle');
+
+        const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease review the conflicts in the worktree manually.`;
+        db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null });
+
+        return res.json({
+          success: false,
+          error: 'Conflict resolver failed: ' + coderErr.message,
+          ticket: db.getTicket(ticket.id),
+        });
+      }
+    }
+  } catch (err) {
+    db.logActivity(ticket.id, 'rebase_error', err.message.slice(0, 200));
+    db.updateTicketField(ticket.id, 'status', 'idle');
+    return res.status(500).json({ error: err.message, ticket: db.getTicket(ticket.id) });
+  }
+});
+
 // ── Stage 4: Ready → cherry-pick + close ──────────────────
 function cleanupWorktreeAfterSuccess(ticketId) {
   const t = db.getTicket(ticketId);
