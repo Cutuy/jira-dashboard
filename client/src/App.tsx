@@ -3,6 +3,7 @@ import { timeAgo } from './lib/utils'
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
+const OTHER_MARKER = '__other__'
 import {
   Loader2, Link as LinkIcon, ExternalLink, Play, Shield,
   RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check, Sun, Moon, Monitor,
@@ -178,7 +179,6 @@ function QuestionCard({
   const long = q.question.length > 110
   const isMC = q.type === 'multiple_choice' && q.options && q.options.length > 0
   // Was "Other" selected? true when answer is a custom value not in the option list.
-  const OTHER_MARKER = '__other__'
   const isOther = answer.startsWith(OTHER_MARKER)
   const otherValue = isOther ? answer.slice(OTHER_MARKER.length) : ''
 
@@ -931,7 +931,7 @@ export default function App() {
     const a: Record<string, string> = {}
     for (const q of sel.questions) {
       let v = answers[q.id] || q.answer || ''
-      if (v.startsWith('__other__')) v = v.slice(10)
+      if (v.startsWith(OTHER_MARKER)) v = v.slice(OTHER_MARKER.length)
       if (v) a[String(q.id)] = v
     }
     if (!Object.keys(a).length) { setError('Answer at least one question'); return }
@@ -948,6 +948,7 @@ export default function App() {
       } else {
         setSel(d); setTickets(p => p.map(x => (x.id === sel.id ? d : x)))
         lastUpd.current = d.updated_at
+        setAnswers({})
       }
     } catch (e: any) { setError(e.message) } finally { setBusy(false) }
   }
