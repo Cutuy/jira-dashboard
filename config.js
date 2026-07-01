@@ -5,8 +5,28 @@
 
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
-// ── Auto-discover project root (where .jira-dashboard/.env lives) ──
+// ── Project root discovery ────────────────────────────────
+// Three strategies, in priority order:
+//   1. cfg.project.path from config.json, if it exists on disk (explicit override)
+//   2. Git-aware: parent of `git rev-parse --git-common-dir` (worktree-safe)
+//   3. Walk up looking for .jira-dashboard/.env (legacy install shape)
+//   4. process.cwd() as last resort
+
+// Resolve the main repo root when cwd is inside a git repo or worktree.
+// Works correctly in self-host / dogfood cases where the worktree is a clean
+// checkout of the jira-dashboard source itself.
+function gitCommonDirAncestor() {
+  try {
+    const common = execSync('git rev-parse --git-common-dir', { encoding: 'utf-8' }).trim();
+    if (!common) return null;
+    return path.resolve(path.dirname(common));
+  } catch {
+    return null;
+  }
+}
+
 function findProjectDir() {
   let dir = process.cwd();
   while (true) {
@@ -30,8 +50,10 @@ if (fs.existsSync(configPath)) {
 }
 
 // ── Resolve project directory ─────────────────────────────
-// Priority: auto-discovered (.jira-dashboard/.env) > config.json project.path > cwd
-const PROJECT_DIR = findProjectDir() || cfg.project?.path || process.cwd();
+const explicitProjectPath = (cfg.project?.path && fs.existsSync(cfg.project?.path))
+  ? cfg.project.path
+  : null;
+const PROJECT_DIR = explicitProjectPath || gitCommonDirAncestor() || findProjectDir() || process.cwd();
 
 // ── .env loader ────────────────────────────────────────────
 function loadEnv(filePath) {
