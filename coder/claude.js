@@ -15,8 +15,14 @@ module.exports = function claudeBackend(config, store) {
       //   "When using --print, --output-format=stream-json requires --verbose"
       // `--include-partial-messages` streams text_delta events so the live
       // view shows the coder's output as it's produced (see formatProgress).
+      // `--dangerously-skip-permissions` is REQUIRED for the implement stage:
+      // in headless `-p` mode there is no interactive prompt, so any Edit /
+      // Write / Bash tool call that needs approval is auto-denied. Without this
+      // flag the coder produces a text-only "I couldn't get permission" result,
+      // makes zero file changes, and the commit is silently skipped
+      // ("no uncommitted changes in worktree").
       // Resume a previous session with `-r <sessionId>`.
-      const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages'];
+      const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '--dangerously-skip-permissions'];
       if (sessionId) args.push('-r', sessionId);
       args.push(prompt);
       return args;
