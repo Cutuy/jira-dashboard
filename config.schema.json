@@ -30,6 +30,12 @@
           "description": "Where to create git worktrees. Defaults to <projectDir>/.worktrees. Override with JIRA_WORKTREES_DIR in .env.",
           "type": ["string", "null"],
           "default": null
+        },
+        "count": {
+          "description": "Max concurrent ticket worktrees. >0 pre-creates a pool of that many worktrees at install time that tickets reuse (caps parallelism); 0 creates one worktree per ticket on demand and deletes it on close. Override with NUM_WORKTREES in .env.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
         }
       }
     },

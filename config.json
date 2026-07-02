@@ -6,7 +6,8 @@
     "path": "/path/to/your/project"
   },
   "worktrees": {
-    "dir": null
+    "dir": null,
+    "count": 0
   },
   "coder": {
     "type": "opencode",

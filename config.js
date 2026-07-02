@@ -122,6 +122,16 @@ const config = {
     return path.join(this.projectDir, '.worktrees');
   },
 
+  // Max concurrent ticket worktrees. >0 enables a pre-created worktree pool
+  // (provisioned at install time) that tickets check out and return, capping
+  // parallelism at this count. 0 keeps the one-worktree-per-ticket behavior:
+  // created on implement, deleted on close.
+  get numWorktrees() {
+    const raw = env('NUM_WORKTREES') ?? cfg.worktrees?.count;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  },
+
   // Coder CLI tool
   coder: {
     type: env('JIRA_CODER_TYPE') || cfg.coder?.type || 'opencode',
