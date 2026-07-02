@@ -2,6 +2,7 @@
 // Decouples the dashboard from any specific AI coding tool.
 // New backends: add a file under coder/<name>.js and register it below.
 
+const path = require('path');
 const { spawn } = require('child_process');
 const config = require('../config');
 const store = require('./store');
@@ -14,8 +15,30 @@ const dummy = require('./dummy')(config, store);
 
 const backends = { opencode, claude, codex, dummy };
 
+// ── Coder type autodetection ──────────────────────────────
+// Prevents the common config mismatch where a user sets
+// JIRA_CODER_BIN=claude (their machine's only AI CLI) but
+// doesn't also set JIRA_CODER_TYPE=claude (the default from
+// config.json is 'opencode').  Without detection, the opencode
+// backend would be selected and emit `--format` flags, which
+// the claude binary rejects with:
+//   error: unknown option '--format'
+function detectType(cfg) {
+  const type = cfg.coder.type;
+  const binName = path.basename(cfg.coder.bin).toLowerCase();
+
+  // Only auto-detect when the configured type is 'opencode' —
+  // the built-in default.  If the user explicitly chose a
+  // different type we respect that choice.
+  if (type !== 'opencode') return type;
+
+  if (binName.startsWith('claude') || binName.includes('claude')) return 'claude';
+  if (binName.startsWith('codex') || binName.includes('codex')) return 'codex';
+  return 'opencode';
+}
+
 function resolveBackend() {
-  const type = config.coder.type;
+  const type = detectType(config);
   const backend = backends[type];
   if (!backend) {
     console.warn(`Unknown coder type "${type}" — using dummy backend`);
@@ -111,4 +134,4 @@ function run(prompt, opts = {}) {
   });
 }
 
-module.exports = { run, getStats, getLastSessionId, buildSpawnOptions };
+module.exports = { run, getStats, getLastSessionId, buildSpawnOptions, detectType };
