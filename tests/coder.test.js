@@ -200,16 +200,26 @@ function cleanupMock() {
   const argsNew = backend.buildArgs('hello world', null, null);
   assert.deepStrictEqual(
     argsNew,
-    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', 'hello world'],
+    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '--dangerously-skip-permissions', 'hello world'],
     'new session args must use --output-format stream-json with --verbose, not --format'
   );
 
   const argsResume = backend.buildArgs('continue fixing', 'sess-123', null);
   assert.deepStrictEqual(
     argsResume,
-    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '-r', 'sess-123', 'continue fixing'],
+    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '--dangerously-skip-permissions', '-r', 'sess-123', 'continue fixing'],
     'resume session args must include -r <sessionId>'
   );
+
+  // In headless `-p` mode there is no interactive approval, so file-editing
+  // tools are auto-denied unless permissions are bypassed. Without this flag
+  // the implement stage silently produces zero changes.
+  for (const args of [argsNew, argsResume]) {
+    assert.ok(
+      args.includes('--dangerously-skip-permissions'),
+      'claude buildArgs must bypass permissions so implement can edit files'
+    );
+  }
 
   // Sanity: the args must never contain a bare `--format` token, which is
   // what `claude` rejects. This guards against a copy-paste from opencode.js.
