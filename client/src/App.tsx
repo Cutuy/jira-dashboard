@@ -7,7 +7,7 @@ const OTHER_MARKER = '__other__'
 import {
   Loader2, Link as LinkIcon, ExternalLink, Play, Shield,
   RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check, Sun, Moon, Monitor,
-  GitBranch
+  GitBranch, Ban
 } from 'lucide-react'
 
 /* ─────────────────────────────────────────────────────────
@@ -53,9 +53,9 @@ type Sug = { id: string; title: string; content: string }
    Stage vocabulary — single source of truth.
    Order in the board, label, color, accent dot.
    ───────────────────────────────────────────────────────── */
-type Stage = 'clarification' | 'implementation' | 'review' | 'done'
+type Stage = 'clarification' | 'implementation' | 'review' | 'done' | 'closed'
 
-const STAGES: Stage[] = ['clarification', 'implementation', 'review', 'done']
+const STAGES: Stage[] = ['clarification', 'implementation', 'review', 'done', 'closed']
 
 const STAGE_META: Record<Stage, { label: string; dot: string; pill: string }> = {
   clarification: {
@@ -77,6 +77,11 @@ const STAGE_META: Record<Stage, { label: string; dot: string; pill: string }> = 
     label: 'Done',
     dot:   'bg-ink-3',
     pill:  'bg-surface-3 text-ink-2 ring-1 ring-border',
+  },
+  closed: {
+    label: 'Closed',
+    dot:   'bg-red-400',
+    pill:  'bg-red-50 text-red-700 ring-1 ring-red-200/70',
   },
 }
 
@@ -837,7 +842,8 @@ export default function App() {
             if (prev) {
               if (prev.status === 'running' && f.status === 'idle') {
                 const label = f.stage === 'review' ? 'ready for review' :
-                  f.stage === 'clarification' ? 'questions ready' : 'done'
+                  f.stage === 'clarification' ? 'questions ready' :
+                  f.stage === 'closed' ? 'closed' : 'done'
                 notify(f.title || f.id, `Stage: ${f.stage} — ${label}`)
               } else if (f.status === 'running' && prev.status !== 'running') {
                 notify(f.title || f.id, `Started: ${f.stage}`)
@@ -988,6 +994,16 @@ export default function App() {
     } catch (e: any) { setError(e.message) } finally { setBusy(false) }
   }
 
+  async function closeTicket(id: string) {
+    if (!confirm('Close this ticket? Any running work is stopped and its worktree is released. This cannot be undone.')) return
+    setBusy(true)
+    try {
+      const d: any = await fetchJSON(`/api/tickets/${id}/close`, { method: 'POST' })
+      setSel(d.ticket); setTickets(p => p.map(x => (x.id === id ? d.ticket : x)))
+      lastUpd.current = d.ticket.updated_at
+    } catch (e: any) { setError(e.message) } finally { setBusy(false) }
+  }
+
   async function rebaseTicket(id: string) {
     setRebaseLoading(true)
     try {
@@ -1083,7 +1099,7 @@ export default function App() {
 
   /* Group tickets by stage once */
   const byStage = useMemo(() => {
-    const m: Record<Stage, T[]> = { clarification: [], implementation: [], review: [], done: [] }
+    const m: Record<Stage, T[]> = { clarification: [], implementation: [], review: [], done: [], closed: [] }
     for (const t of tickets) {
       if (t.stage in m) (m as any)[t.stage].push(t)
     }
@@ -1178,7 +1194,7 @@ export default function App() {
         )}
 
         {/* ── Board ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5">
           {STAGES.map(stage => {
             const items = byStage[stage]
             const meta = STAGE_META[stage]
@@ -1708,6 +1724,11 @@ export default function App() {
 
           {/* Footer */}
           <DialogFooter>
+            {sel.stage !== 'closed' && (
+              <Btn variant="danger" onClick={() => closeTicket(sel.id)} disabled={busy}>
+                <Ban className="h-3.5 w-3.5" /> Close ticket
+              </Btn>
+            )}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto sm:ml-auto">
             {sel.stage === 'clarification' && (
               <>

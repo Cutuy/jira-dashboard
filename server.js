@@ -109,15 +109,51 @@ function formatPlanText(plan) {
 }
 
 // ── Coder runner (thin wrapper) ───────────────────────────
+// Live coder child processes keyed by ticket id. Lets a ticket be
+// force-closed — and its running process killed — mid-stage.
+const runningProcs = new Map();
+
+// SIGTERM the coder process for a ticket, escalating to SIGKILL if it lingers.
+// Coder processes are spawned detached (their own process group), so we signal
+// the whole group — a plain proc.kill() only hits the group leader and can
+// leave spawned children (git, language servers, …) running. Returns true if a
+// process was actually running.
+function killTicketProcess(ticketId) {
+  const proc = runningProcs.get(ticketId);
+  if (!proc || proc.pid == null) return false;
+  runningProcs.delete(ticketId);
+  const pid = proc.pid;
+  const signal = (sig) => {
+    try { process.kill(-pid, sig); }
+    catch { try { proc.kill(sig); } catch {} } // fallback if not a group leader / already gone
+  };
+  signal('SIGTERM');
+  const t = setTimeout(() => signal('SIGKILL'), 2000);
+  if (typeof t.unref === 'function') t.unref();
+  return true;
+}
+
+// A ticket was moved to the terminal 'closed' stage (via /close) while a stage
+// was still running. Handlers check this after their coder run so they don't
+// resurrect a closed ticket with a post-run stage transition.
+function isClosed(ticketId) {
+  return db.getTicket(ticketId)?.stage === 'closed';
+}
+
 async function runCoder(ticketId, prompt, opts = {}) {
   const ticket = db.getTicket(ticketId);
-  return coder.run(prompt, {
-    sessionId: ticket?.ocode_session,
-    title: `ticket-${ticketId}`,
-    timeout: opts.timeout || config.coder.timeouts.clarify,
-    onProgress: opts.onProgress,
-    cwd: opts.cwd,
-  });
+  try {
+    return await coder.run(prompt, {
+      sessionId: ticket?.ocode_session,
+      title: `ticket-${ticketId}`,
+      timeout: opts.timeout || config.coder.timeouts.clarify,
+      onProgress: opts.onProgress,
+      cwd: opts.cwd,
+      onSpawn: (proc) => runningProcs.set(ticketId, proc),
+    });
+  } finally {
+    runningProcs.delete(ticketId);
+  }
 }
 
 // ── Rebase conflict clarification ──────────────────────────
@@ -775,6 +811,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
   }
 
   let worktreePath, branchName;
+  let fileMonitor = null;
 
   try {
     // Set up (or reuse) the ticket's worktree. In pooled mode this claims a
@@ -816,7 +853,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
 
     // File-change monitor
     const seenFiles = new Set();
-    const fileMonitor = setInterval(() => {
+    fileMonitor = setInterval(() => {
       try {
         const changed = execSync(`git diff --name-only`, { cwd: worktreePath, encoding: 'utf-8', timeout: 5000 }).trim();
         if (changed) {
@@ -854,6 +891,13 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       timeout: config.coder.timeouts.implement,
       onProgress,
     });
+
+    // Ticket was closed while implementing — stop here, don't commit or
+    // transition it back into 'review'.
+    if (isClosed(ticket.id)) {
+      clearInterval(fileMonitor);
+      return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
+    }
 
     const tokensAfter = coder.getStats();
     const tokenDelta = {
@@ -920,6 +964,12 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       test_run_id: testRunId, ticket: db.getTicket(ticket.id),
     });
   } catch (err) {
+    clearInterval(fileMonitor);
+    // Killed because the ticket was closed mid-run — its worktree is already
+    // released and the stage is terminal. Don't salvage-commit or reopen it.
+    if (isClosed(ticket.id)) {
+      return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
+    }
     const t2 = db.getTicket(ticket.id);
     if (t2) {
       const lastRes = (t2.activity || []).find(a => a.action === 'resource');
@@ -1246,6 +1296,35 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     db.logActivity(ticket.id, 'ready_error', `${err.message}${tail} Worktree preserved — ticket stays in review.`);
     res.status(500).json({ error: err.message, ticket: db.getTicket(ticket.id) });
   }
+});
+
+// ── Close ticket ──────────────────────────────────────────
+// Terminal action available in ANY stage — including while a stage is
+// running. Kills the active coder process (if any), releases the worktree /
+// pool slot and branch, then moves the ticket to the terminal 'closed' stage.
+// An already-closed ticket cannot be closed again.
+app.post('/api/tickets/:id/close', (req, res) => {
+  const ticket = db.getTicket(req.params.id);
+  if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  if (ticket.stage === 'closed') {
+    return res.status(400).json({ error: 'Ticket is already closed' });
+  }
+
+  // 1. Stop any in-flight coder process for this ticket.
+  const killed = killTicketProcess(ticket.id);
+
+  // 2. Mark terminal BEFORE releasing the worktree. A handler whose coder
+  //    process we just killed will resume in its catch block; seeing the
+  //    closed stage (via isClosed) it bails instead of reopening the ticket.
+  db.updateTicket(ticket.id, { stage: 'closed', status: 'idle' });
+
+  // 3. Release the worktree / pool slot and branch (safe when there is none).
+  worktrees.release(ticket.id);
+
+  db.logActivity(ticket.id, 'closed', killed ? 'closed — running process killed' : 'closed');
+  const updated = db.getTicket(ticket.id);
+  sseBroadcast(ticket.id, 'ticket', updated);
+  res.json({ success: true, ticket: updated });
 });
 
 // ── Delete ticket ─────────────────────────────────────────
