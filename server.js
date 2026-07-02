@@ -9,7 +9,7 @@ const config = require('./config');
 const coder = require('./coder');
 const prompts = require('./prompts');
 const db = require('./db');
-const pool = require('./worktree-pool');
+const worktrees = require('./worktree-manager');
 
 const PORT = config.port;
 const DATA_DIR = config.dataDir;
@@ -266,53 +266,6 @@ function getBranchStaleness(worktreePath) {
   } catch {
     return null;
   }
-}
-
-function ensureWorktreesDir() {
-  if (!fs.existsSync(config.worktreesDir)) {
-    fs.mkdirSync(config.worktreesDir, { recursive: true });
-  }
-}
-
-// ── Worktree pool (active when config.numWorktrees > 0) ────
-// True when `wt` is one of the pre-created pool slots (<worktreesDir>/pool-N).
-function isPoolWorktree(wt) {
-  return pool.isPoolWorktree(config.worktreesDir, wt);
-}
-
-// Claim a free pool slot for a ticket and check out its feature branch.
-// Returns { worktreePath, branchName } or null when every slot is in use —
-// the pool size is therefore the hard ceiling on parallel tickets.
-function acquirePoolWorktree(ticket, branchName) {
-  const claimed = new Set(
-    db.getAllTickets()
-      .filter((t) => t.id !== ticket.id && t.worktree_path)
-      .map((t) => path.resolve(t.worktree_path))
-  );
-  for (const wt of pool.poolPaths(config.worktreesDir, config.numWorktrees)) {
-    if (claimed.has(path.resolve(wt))) continue;   // held by another ticket
-    if (!pool.isValidWorktree(wt)) continue;        // not provisioned — skip
-    try {
-      pool.acquireSlot({ worktreePath: wt, branchDefault: config.branchDefault, branchName });
-    } catch (e) {
-      db.logActivity(ticket.id, 'worktree_acquire_warn',
-        `slot ${wt} failed to prep: ${e.message.slice(0, 120)}`);
-      continue; // corrupt slot — try the next one
-    }
-    return { worktreePath: wt, branchName };
-  }
-  return null;
-}
-
-// Reset a pool slot back to idle (clean, detached, feature branch dropped) and
-// detach the ticket from it. The slot directory is preserved for reuse.
-function releasePoolWorktree(ticketId) {
-  const t = db.getTicket(ticketId);
-  const wt = t && t.worktree_path;
-  const bn = t && t.branch_name;
-  pool.releaseSlot({ worktreePath: wt, branchDefault: config.branchDefault, branchName: bn });
-  db.updateTicket(ticketId, { worktree_path: null, branch_name: null });
-  db.logActivity(ticketId, 'worktree_released', wt || '(none)');
 }
 
 function commitWorktreeChanges(worktreePath, ticketId, message, { partial = false } = {}) {
@@ -816,64 +769,21 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
     ticket = db.getTicket(ticket.id);
   }
 
-  ensureWorktreesDir();
-  const safeId = ticket.id.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
-  const branchName = `feature/${safeId}`;
-  let worktreePath;
+  let worktreePath, branchName;
 
   try {
-    if (config.numWorktrees > 0) {
-      // Pooled mode: reuse this ticket's slot if it still holds one (e.g. a
-      // review → re-implement cycle), otherwise claim a free slot. The pool
-      // size caps how many tickets can be in flight at once.
-      if (pool.isValidWorktree(ticket.worktree_path) && ticket.branch_name) {
-        worktreePath = ticket.worktree_path;
-      } else {
-        const slot = acquirePoolWorktree(ticket, branchName);
-        if (!slot) {
-          db.updateTicketField(ticket.id, 'status', 'idle');
-          return res.status(409).json({
-            error: `All ${config.numWorktrees} worktree slots are in use. Finish or close another ticket first.`,
-          });
-        }
-        worktreePath = slot.worktreePath;
-        db.logActivity(ticket.id, 'worktree_acquired', worktreePath);
+    // Set up (or reuse) the ticket's worktree. In pooled mode this claims a
+    // free slot; a full pool surfaces as a clean 409 rather than an
+    // implementation failure.
+    try {
+      ({ worktreePath, branchName } = worktrees.acquire(ticket));
+    } catch (err) {
+      if (err.code === 'POOL_FULL') {
+        db.updateTicketField(ticket.id, 'status', 'idle');
+        return res.status(409).json({ error: err.message });
       }
-    } else {
-      // Per-ticket mode: one throwaway worktree per ticket, deleted on close.
-      worktreePath = path.join(config.worktreesDir, safeId);
-      const dirHere = fs.existsSync(worktreePath);
-      const { execSync } = require('child_process');
-      const tracked = (() => {
-        try { return execSync(`git worktree list`, { cwd: config.projectDir, encoding: 'utf-8' }).includes(worktreePath); }
-        catch { return false; }
-      })();
-      console.log(`[implement] ${ticket.id} dirHere=${dirHere} tracked=${tracked} path=${worktreePath}`);
-
-      if (dirHere && tracked) {
-        // Worktree already set up
-      } else {
-        // Clean up any orphan directory (left over from a crashed previous run)
-        // so `git worktree add` can create a fresh linked worktree.
-        if (dirHere) fs.rmSync(worktreePath, { recursive: true, force: true });
-
-        // Drop any stale branch from a previous attempt. `git branch -D` works
-        // even if the branch is checked out elsewhere (e.g. in the orphan
-        // we just removed).
-        try { runGit(`branch -D ${branchName}`); } catch {}
-
-        // Create the worktree with a fresh branch off the default branch in a
-        // single command. Crucially, this NEVER touches the main checkout's
-        // working tree — no `git checkout`, no clobbering of the user's
-        // uncommitted local changes. `git worktree add -b` is a metadata
-        // operation: it writes a new branch ref and a new worktree directory,
-        // leaves projectDir alone.
-        runGit(`worktree add -b ${branchName} ${worktreePath} ${config.branchDefault}`);
-      }
+      throw err; // real setup failure — fall through to the salvage handler
     }
-
-    db.updateTicket(ticket.id, { worktree_path: worktreePath, branch_name: branchName });
-    db.logActivity(ticket.id, 'worktree_created', worktreePath);
 
     const qaText = ticket.questions.map((q, i) =>
       `Q: ${q.question}\nA: ${q.answer || 'N/A'}`
@@ -1015,7 +925,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       // Only attempt a salvage commit if we actually got a worktree. If setup
       // failed before one was assigned, `worktreePath` is undefined and running
       // git with a null cwd would operate on the main checkout — never do that.
-      const partialSha = pool.isValidWorktree(worktreePath)
+      const partialSha = worktrees.isValidWorktree(worktreePath)
         ? commitWorktreeChanges(worktreePath, ticket.id,
             `${ticket.id}: partial (error: ${err.message.slice(0, 80).replace(/"/g, '')})`, { partial: true })
         : null;
@@ -1210,31 +1120,6 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
 });
 
 // ── Stage 4: Ready → cherry-pick + close ──────────────────
-function cleanupWorktreeAfterSuccess(ticketId) {
-  const t = db.getTicket(ticketId);
-  if (!t) return;
-  const wt = t.worktree_path;
-  const bn = t.branch_name;
-  // Pooled slots are returned to the pool (reset + detached), never deleted.
-  if (config.numWorktrees > 0 && isPoolWorktree(wt)) {
-    releasePoolWorktree(ticketId);
-    return;
-  }
-  if (wt) {
-    try { runGit(`worktree remove --force ${wt}`); }
-    catch (e) { db.logActivity(ticketId, 'cleanup_warn', `worktree remove failed (non-fatal): ${e.message}`); }
-  }
-  if (bn) {
-    try { runGit(`branch -D ${bn}`); }
-    catch (e) { db.logActivity(ticketId, 'cleanup_warn', `branch delete failed (non-fatal): ${e.message}`); }
-  }
-  if (wt && fs.existsSync(wt)) {
-    try { fs.rmSync(wt, { recursive: true, force: true }); }
-    catch (e) { db.logActivity(ticketId, 'cleanup_warn', `rm worktree dir failed (non-fatal): ${e.message}`); }
-  }
-  db.updateTicket(ticketId, { worktree_path: null, branch_name: null });
-}
-
 app.post('/api/tickets/:id/ready', async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
@@ -1346,7 +1231,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     }
 
     db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
-    if (config.mergeStrategy !== 'pr') cleanupWorktreeAfterSuccess(ticket.id);
+    if (config.mergeStrategy !== 'pr') worktrees.release(ticket.id);
 
     res.json({ success: true, commit_sha: commitSha, pr_url: prUrl, ticket: db.getTicket(ticket.id) });
   } catch (err) {
@@ -1363,17 +1248,8 @@ app.delete('/api/tickets/:id', (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
-  if (config.numWorktrees > 0 && isPoolWorktree(ticket.worktree_path)) {
-    // Pooled slot: reset and return it to the pool rather than removing it.
-    releasePoolWorktree(ticket.id);
-  } else {
-    if (ticket.worktree_path && fs.existsSync(ticket.worktree_path)) {
-      try { runGit(`worktree remove --force ${ticket.worktree_path}`); } catch {}
-    }
-    if (ticket.branch_name) {
-      try { runGit(`branch -D ${ticket.branch_name}`); } catch {}
-    }
-  }
+  // Return a pooled slot to the pool, or remove a per-ticket worktree.
+  worktrees.release(ticket.id);
 
   db.deleteTicket(req.params.id);
   res.json({ success: true });
