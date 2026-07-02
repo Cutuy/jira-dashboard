@@ -1511,7 +1511,9 @@ export default function App() {
                       <Section title="Live status">
                         <div className="flex items-center gap-2 t-body text-ink-2 mb-3">
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          Resolving rebase conflicts…
+                          {(sel.activity || [])[0]?.action === 'pushing'
+                            ? 'Pushing branch and opening PR…'
+                            : 'Resolving rebase conflicts…'}
                         </div>
                         <div className="mt-3 rounded-lg ring-1 ring-border p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />

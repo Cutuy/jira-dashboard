@@ -60,7 +60,8 @@
             "implement": { "type": "integer", "default": 600000 },
             "suggest": { "type": "integer", "default": 120000 },
             "test": { "type": "integer", "default": 300000 },
-            "command": { "type": "integer", "default": 30000 }
+            "command": { "type": "integer", "default": 30000 },
+            "push": { "type": "integer", "default": 600000 }
           }
         }
       }

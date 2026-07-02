@@ -254,8 +254,61 @@ function runGit(args, cwd) {
   }).trim();
 }
 
+// Async command runner — spawns through `bash -lc` so the event loop is not
+// blocked while a slow command runs (e.g. a `git push` that triggers a heavy
+// local pre-push hook). Resolves with trimmed stdout, rejects with stderr.
+function execAsync(command, cwd, timeout) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('bash', ['-lc', command], { cwd, timeout });
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (err += d));
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) resolve(out.trim());
+      else reject(new Error((err || out).trim() || `command exited with code ${code}`));
+    });
+  });
+}
+
 function escShell(str) {
   return str.replace(/[\\'"$`]/g, '\\$&');
+}
+
+// Push the ticket branch and open a PR in the background. The `git push` can be
+// slow when the repo has a heavy local pre-push hook, so this runs AFTER the
+// HTTP response is sent (via execAsync, which does not block the event loop).
+// While it runs the ticket stays in `review` with status `running`; on success
+// it advances to `done`, on failure it drops back to idle with the squashed
+// commit preserved on the branch so the user can retry `ready`.
+async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
+  const pushTimeout = config.coder.timeouts.push || 600_000;
+  const cmdTimeout = config.coder.timeouts.command;
+  try {
+    await execAsync(`git push origin ${branchName}`, worktreePath, pushTimeout);
+    db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
+
+    let prUrl;
+    try {
+      prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""`, worktreePath, cmdTimeout);
+      db.logActivity(ticketId, 'pr_created', prUrl);
+    } catch {
+      const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout);
+      const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
+      prUrl = `https://github.com/${repoPath}/pull/new/${branchName}`;
+      db.logActivity(ticketId, 'pr_link', prUrl);
+    }
+
+    db.updateTicket(ticketId, { stage: 'done', status: 'idle' });
+  } catch (err) {
+    db.logActivity(
+      ticketId,
+      'ready_error',
+      `Push failed: ${err.message}. Squashed commit is still on branch ${branchName} in the worktree — ticket stays in review, retry when ready.`
+    );
+    db.updateTicketField(ticketId, 'status', 'idle');
+  }
 }
 
 // Resolve the commit to diff a ticket branch against. Pool worktrees are
@@ -1205,6 +1258,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
 
   if (!ticket.worktree_path || !fs.existsSync(path.join(ticket.worktree_path, '.git'))) {
     const msg = `Worktree integrity check failed: ${ticket.worktree_path || '(unset)'}/.git is missing or invalid. Cherry-pick aborted.`;
@@ -1253,25 +1307,17 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     db.logActivity(ticket.id, 'committed', commitSha);
     assertWorktreeClean(ticket, { stage: 'cherry-pick' });
 
-    let prUrl = null;
     if (config.mergeStrategy === 'pr') {
-      runGit(`push origin ${ticket.branch_name}`, ticket.worktree_path);
-      db.logActivity(ticket.id, 'branch_pushed', `Pushed ${ticket.branch_name} to origin`);
-
-      try {
-        const prOutput = require('child_process').execSync(
-          `gh pr create --title "${ticket.id}: ${ticket.title}" --body ""`,
-          { cwd: ticket.worktree_path, encoding: 'utf-8', timeout: config.coder.timeouts.command }
-        ).trim();
-        prUrl = prOutput;
-        db.logActivity(ticket.id, 'pr_created', prUrl);
-      } catch {
-        const remoteUrl = runGit(`config --get remote.origin.url`, ticket.worktree_path);
-        const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
-        const prLink = `https://github.com/${repoPath}/pull/new/${ticket.branch_name}`;
-        prUrl = prLink;
-        db.logActivity(ticket.id, 'pr_link', prLink);
-      }
+      // Push + PR creation runs in the background — a slow local pre-push hook
+      // (or network round-trip) must not block and time out this request. The
+      // commit is already squashed onto the branch; the ticket stays in
+      // `review` with status `running` until the background task advances it to
+      // `done` on success (or drops it back to idle on failure, preserving the
+      // commit so the user can retry `ready`).
+      db.updateTicket(ticket.id, { commit_sha: commitSha, status: 'running' });
+      db.logActivity(ticket.id, 'pushing', `Pushing ${ticket.branch_name} and opening PR in the background…`);
+      pushAndOpenPr(ticket.id, ticket.branch_name, `${ticket.id}: ${ticket.title}`, ticket.worktree_path);
+      return res.json({ success: true, pending: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
     } else {
       try {
         runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
@@ -1312,9 +1358,9 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     }
 
     db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
-    if (config.mergeStrategy !== 'pr') worktrees.release(ticket.id);
+    worktrees.release(ticket.id);
 
-    res.json({ success: true, commit_sha: commitSha, pr_url: prUrl, ticket: db.getTicket(ticket.id) });
+    res.json({ success: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
   } catch (err) {
     const tail = commitSha
       ? ` Squashed commit ${commitSha.slice(0, 7)} is still on branch ${ticket.branch_name} in the worktree.`
