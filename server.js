@@ -546,6 +546,7 @@ app.get('/api/config', (req, res) => {
     explorer: config.explorer,
     testEnabled: config.test.enabled,
     branchDefault: config.branchDefault,
+    mergeStrategy: config.mergeStrategy,
   });
 });
 
