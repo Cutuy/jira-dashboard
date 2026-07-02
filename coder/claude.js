@@ -7,6 +7,13 @@ module.exports = function claudeBackend(config, store) {
     stats() { return store.lastUsage; },
 
     buildArgs(prompt, sessionId, title) {
+      // NOTE: Claude Code uses `--output-format` (not `--format`). The latter
+      // is an OpenCode flag and will be rejected by `claude` with
+      //   error: unknown option '--format'
+      // `--output-format stream-json` also requires `--verbose` to be passed
+      // before it, or `claude` errors with
+      //   "When using --print, --output-format=stream-json requires --verbose"
+      // Resume a previous session with `-r <sessionId>`.
       const args = ['-p', '--verbose', '--output-format', 'stream-json'];
       if (sessionId) args.push('-r', sessionId);
       args.push(prompt);

@@ -181,6 +181,134 @@ function cleanupMock() {
   cleanupMock();
 })();
 
+// ── Claude backend tests ───────────────────────────────────
+// Claude Code's CLI uses `--output-format` (not `--format` — the latter is
+// an OpenCode flag and `claude` will reject it with "unknown option").
+// `claude` also requires `--verbose` whenever `--output-format=stream-json`
+// is passed under `--print` (-p). These tests pin those invariants so a
+// future refactor can't silently regress the flag spelling.
+(function testClaudeBuildArgs() {
+  const store = require('../coder/store');
+  const mockConfig = {
+    projectDir: '/tmp/test-project',
+    venv: { dir: '.venv' },
+    venvBin() { return '/tmp/test-project/.venv/bin'; },
+  };
+  const claudeBackend = require('../coder/claude')(mockConfig, store);
+  const backend = claudeBackend;
+
+  const argsNew = backend.buildArgs('hello world', null, null);
+  assert.deepStrictEqual(
+    argsNew,
+    ['-p', '--verbose', '--output-format', 'stream-json', 'hello world'],
+    'new session args must use --output-format stream-json with --verbose, not --format'
+  );
+
+  const argsResume = backend.buildArgs('continue fixing', 'sess-123', null);
+  assert.deepStrictEqual(
+    argsResume,
+    ['-p', '--verbose', '--output-format', 'stream-json', '-r', 'sess-123', 'continue fixing'],
+    'resume session args must include -r <sessionId>'
+  );
+
+  // Sanity: the args must never contain a bare `--format` token, which is
+  // what `claude` rejects. This guards against a copy-paste from opencode.js.
+  for (const args of [argsNew, argsResume]) {
+    assert.ok(
+      !args.includes('--format'),
+      'claude buildArgs must not emit --format (claude CLI rejects it)'
+    );
+    assert.ok(
+      args.includes('--output-format') && args.includes('stream-json'),
+      'claude buildArgs must emit --output-format stream-json'
+    );
+    assert.ok(
+      args.indexOf('--verbose') < args.indexOf('--output-format'),
+      '--verbose must precede --output-format (claude enforces this order)'
+    );
+  }
+
+  console.log('PASS: claude buildArgs uses --output-format stream-json');
+})();
+
+(function testClaudeFormatProgress() {
+  const store = require('../coder/store');
+  const mockConfig = { projectDir: '/tmp', venv: { dir: '.venv' }, venvBin() { return '/tmp/.venv/bin'; } };
+  const claudeBackend = require('../coder/claude')(mockConfig, store);
+  const backend = claudeBackend;
+
+  // stream-json assistant text delta — the live-progress hook.
+  const deltaLine = JSON.stringify({
+    type: 'stream_event',
+    event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } },
+  });
+  assert.strictEqual(backend.formatProgress(deltaLine), 'hello', 'text delta returned');
+
+  // Non-delta events should return null so the caller falls back to raw.
+  assert.strictEqual(
+    backend.formatProgress(JSON.stringify({ type: 'message_start' })),
+    null,
+    'non-delta events return null'
+  );
+  assert.strictEqual(backend.formatProgress('not json'), null, 'invalid json returns null');
+
+  console.log('PASS: claude formatProgress');
+})();
+
+(function testClaudeParseOutput() {
+  const store = require('../coder/store');
+  const mockConfig = { projectDir: '/tmp', venv: { dir: '.venv' }, venvBin() { return '/tmp/.venv/bin'; } };
+  const claudeBackend = require('../coder/claude')(mockConfig, store);
+  const backend = claudeBackend;
+
+  store.setUsage({ cost: 0, input: '0', output: '0' });
+  store.setSessionId(null);
+
+  // Multi-line stream-json run.
+  const sampleStdout = [
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-abc-123' }),
+    JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 100, output_tokens: 50 }, content: [{ type: 'text', text: 'partial ' }] } }),
+    JSON.stringify({ type: 'result', subtype: 'success', session_id: 'sess-abc-123', result: 'partial done', total_cost_usd: 0.0123, usage: { input_tokens: 120, output_tokens: 60 } }),
+  ].join('\n');
+
+  const output = backend.parseOutput(sampleStdout);
+  assert.strictEqual(output, 'partial done', 'result text extracted from final event');
+  assert.strictEqual(store.lastSessionId, 'sess-abc-123', 'session id stored');
+  assert.strictEqual(store.lastUsage.input, '120', 'input tokens stored');
+  assert.strictEqual(store.lastUsage.output, '60', 'output tokens stored');
+  assert.strictEqual(store.lastUsage.cost, 0.0123, 'cost stored');
+
+  // Reset store so subsequent tests (e.g. unknown backend fallback) see the
+  // expected baseline of zero usage.
+  store.setUsage({ cost: 0, input: '0', output: '0' });
+  store.setSessionId(null);
+
+  console.log('PASS: claude parseOutput extracts events');
+})();
+
+(function testClaudeParseOutputFallback() {
+  const store = require('../coder/store');
+  const mockConfig = { projectDir: '/tmp', venv: { dir: '.venv' }, venvBin() { return '/tmp/.venv/bin'; } };
+  const claudeBackend = require('../coder/claude')(mockConfig, store);
+  const backend = claudeBackend;
+
+  const raw = 'plain text from claude --print without --output-format';
+  assert.strictEqual(backend.parseOutput(raw), raw, 'non-JSON output returned as-is');
+
+  console.log('PASS: claude parseOutput fallback to raw');
+})();
+
+(async function testRunWithClaudeType() {
+  injectMockConfig('claude');
+  const coder = require('../coder');
+
+  const result = await coder.run('test prompt', { timeout: 500 });
+  assert.ok(typeof result === 'string', 'run with claude type should return string');
+  console.log('PASS: run with claude type resolves');
+
+  cleanupMock();
+})();
+
 // ── Unknown backend fallback ───────────────────────────────
 (function testUnknownBackendFallback() {
   injectMockConfig('nonexistent');
