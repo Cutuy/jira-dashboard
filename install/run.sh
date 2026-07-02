@@ -93,7 +93,11 @@ ENV_FILE="${ENV_DIR}/.env"
 mkdir -p "$ENV_DIR"
 if [ -f "$ENV_FILE" ]; then
   ok ".env already exists at ${ENV_FILE} — keeping your settings"
+  NUM_WORKTREES=$(grep '^NUM_WORKTREES=' "$ENV_FILE" | sed 's/^[^=]*=//' | head -n1)
 else
+  NUM_WORKTREES=$(prompt "Max parallel ticket worktrees to pre-create (0 = one per ticket, created on demand) [0]")
+  NUM_WORKTREES="${NUM_WORKTREES:-0}"
+  case "$NUM_WORKTREES" in ''|*[!0-9]*) fail "Worktree count must be a non-negative integer: ${NUM_WORKTREES}";; esac
   PORT=$(node "${ROOT}/service/index.js" find-port 3006)
   cat > "$ENV_FILE" <<-EOF
 JIRA_PROJECT_NAME=${PROJECT_NAME}
@@ -104,8 +108,22 @@ EXPLORER_URL=${EXPLORER_URL}
 GITHUB_OWNER=${REMOTE_OWNER}
 GITHUB_REPO=${REMOTE_REPO}
 GIT_DEFAULT_BRANCH=${DEFAULT_BRANCH}
+NUM_WORKTREES=${NUM_WORKTREES}
 EOF
   ok "Created ${ENV_FILE}"
+fi
+# Sanitize so the numeric test below is safe under `set -e`.
+case "${NUM_WORKTREES:-0}" in ''|*[!0-9]*) NUM_WORKTREES=0;; esac
+
+# ── Step 1b: Worktree pool (idempotent) ────────────────────
+if [ "$NUM_WORKTREES" -gt 0 ]; then
+  step "Worktree pool"
+  EFFECTIVE_BRANCH=$(grep '^GIT_DEFAULT_BRANCH=' "$ENV_FILE" | sed 's/^[^=]*=//' | head -n1)
+  EFFECTIVE_BRANCH="${EFFECTIVE_BRANCH:-$DEFAULT_BRANCH}"
+  WT_DIR=$(grep '^JIRA_WORKTREES_DIR=' "$ENV_FILE" | sed 's/^[^=]*=//' | head -n1)
+  info "Pre-creating ${NUM_WORKTREES} worktree(s) off '${EFFECTIVE_BRANCH}' — may take a while on large repos"
+  node "${ROOT}/install/setup-worktrees.js" "$PROJECT_DIR" "$EFFECTIVE_BRANCH" "$NUM_WORKTREES" ${WT_DIR:+"$WT_DIR"}
+  ok "Worktree pool ready (${NUM_WORKTREES} slot(s))"
 fi
 
 # ── Step 2: Dependencies ────────────────────────────────────
