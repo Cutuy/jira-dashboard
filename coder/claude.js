@@ -13,8 +13,10 @@ module.exports = function claudeBackend(config, store) {
       // `--output-format stream-json` also requires `--verbose` to be passed
       // before it, or `claude` errors with
       //   "When using --print, --output-format=stream-json requires --verbose"
+      // `--include-partial-messages` streams text_delta events so the live
+      // view shows the coder's output as it's produced (see formatProgress).
       // Resume a previous session with `-r <sessionId>`.
-      const args = ['-p', '--verbose', '--output-format', 'stream-json'];
+      const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages'];
       if (sessionId) args.push('-r', sessionId);
       args.push(prompt);
       return args;

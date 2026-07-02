@@ -200,14 +200,14 @@ function cleanupMock() {
   const argsNew = backend.buildArgs('hello world', null, null);
   assert.deepStrictEqual(
     argsNew,
-    ['-p', '--verbose', '--output-format', 'stream-json', 'hello world'],
+    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', 'hello world'],
     'new session args must use --output-format stream-json with --verbose, not --format'
   );
 
   const argsResume = backend.buildArgs('continue fixing', 'sess-123', null);
   assert.deepStrictEqual(
     argsResume,
-    ['-p', '--verbose', '--output-format', 'stream-json', '-r', 'sess-123', 'continue fixing'],
+    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '-r', 'sess-123', 'continue fixing'],
     'resume session args must include -r <sessionId>'
   );
 
