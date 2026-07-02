@@ -417,6 +417,11 @@ function formatSummary(parsed, status) {
 function runTicketTests(ticketId, triggeredBy = 'auto') {
   const ticket = db.getTicket(ticketId);
   if (!ticket) return null;
+
+  // Auto-run (post-implement hook) is opt-in via config.test.enabled. Manual
+  // runs from the UI always execute regardless of the flag.
+  if (triggeredBy === 'auto' && !config.test.enabled) return null;
+
   const wt = ticket.worktree_path;
   if (!wt || !fs.existsSync(wt)) {
     const runId = db.createTestRun(ticketId, null, null, triggeredBy);
