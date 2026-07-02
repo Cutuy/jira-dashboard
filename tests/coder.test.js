@@ -309,6 +309,55 @@ function cleanupMock() {
   cleanupMock();
 })();
 
+// ── Coder type auto-detection ─────────────────────────────
+(function testDetectTypeAutoMatchesClaudeBin() {
+  const mock = {
+    coder: { type: 'opencode', bin: 'claude' },
+  };
+  assert.strictEqual(
+    require('../coder').detectType(mock),
+    'claude',
+    'bin=claude with type=opencode (default) → detected claude'
+  );
+  console.log('PASS: detectType: bin=claude matches claude backend');
+})();
+
+(function testDetectTypeAutoMatchesCodexBin() {
+  const mock = {
+    coder: { type: 'opencode', bin: '/usr/local/bin/codex' },
+  };
+  assert.strictEqual(
+    require('../coder').detectType(mock),
+    'codex',
+    'bin=/path/codex with type=opencode → detected codex'
+  );
+  console.log('PASS: detectType: bin=codex matches codex backend');
+})();
+
+(function testDetectTypeSkipsWhenExplicit() {
+  const mock = {
+    coder: { type: 'dummy', bin: 'claude' },
+  };
+  assert.strictEqual(
+    require('../coder').detectType(mock),
+    'dummy',
+    'type=dummy (explicit) → not overridden by bin=claude'
+  );
+  console.log('PASS: detectType: explicit type not overridden by bin name');
+})();
+
+(function testDetectTypeUnknownBinStaysOpencode() {
+  const mock = {
+    coder: { type: 'opencode', bin: '/home/user/bin/my-coder' },
+  };
+  assert.strictEqual(
+    require('../coder').detectType(mock),
+    'opencode',
+    'unknown bin name with type=opencode → stays opencode'
+  );
+  console.log('PASS: detectType: unknown bin name → stays opencode');
+})();
+
 // ── Unknown backend fallback ───────────────────────────────
 (function testUnknownBackendFallback() {
   injectMockConfig('nonexistent');
