@@ -282,11 +282,16 @@ function escShell(str) {
 // While it runs the ticket stays in `review` with status `running`; on success
 // it advances to `done`, on failure it drops back to idle with the squashed
 // commit preserved on the branch so the user can retry `ready`.
+//
+// Because this runs after the response, the ticket can be closed mid-push. Any
+// terminal state write is guarded by isClosed() so a completed push never
+// resurrects a ticket the user already moved to the terminal `closed` stage.
 async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
   const pushTimeout = config.coder.timeouts.push || 600_000;
   const cmdTimeout = config.coder.timeouts.command;
   try {
     await execAsync(`git push origin ${branchName}`, worktreePath, pushTimeout);
+    if (isClosed(ticketId)) return;
     db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
 
     let prUrl;
@@ -300,8 +305,10 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
       db.logActivity(ticketId, 'pr_link', prUrl);
     }
 
+    if (isClosed(ticketId)) return;
     db.updateTicket(ticketId, { stage: 'done', status: 'idle' });
   } catch (err) {
+    if (isClosed(ticketId)) return;
     db.logActivity(
       ticketId,
       'ready_error',
