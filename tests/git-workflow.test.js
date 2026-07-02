@@ -215,4 +215,116 @@ function cleanupRepo(repoDir) {
   }
 })();
 
+// ── Fix: the diff endpoint must not compare against a STALE local default
+//    branch. Pool worktrees never fetch, so the local `develop`/`main` ref
+//    drifts hundreds of commits behind origin. Diffing `develop..HEAD`
+//    against the stale local ref sweeps in every commit merged upstream since
+//    the worktree was provisioned. resolveDiffBase picks the branch point
+//    (merge-base) closest to HEAD across the local ref and origin/<ref>.
+(function testResolveDiffBaseIgnoresStaleLocalRef() {
+  // Mirror of server.js resolveDiffBase, parameterized on cwd/base so we can
+  // exercise the real git behavior without booting the server.
+  function resolveDiffBase(cwd, base) {
+    let best = null;
+    let bestCount = Infinity;
+    for (const ref of [`origin/${base}`, base]) {
+      let branchPoint;
+      try { branchPoint = sh(`git merge-base ${ref} HEAD`, cwd); } catch { continue; }
+      let count;
+      try { count = parseInt(sh(`git rev-list --count ${branchPoint}..HEAD`, cwd), 10); } catch { continue; }
+      if (Number.isFinite(count) && count < bestCount) {
+        bestCount = count;
+        best = branchPoint;
+      }
+    }
+    return best || base;
+  }
+
+  // "origin" upstream repo with main.
+  const origin = makeRepo();
+  // Local clone that will develop a stale local `main` ref.
+  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-diffbase-clone-'));
+  try {
+    sh(`git clone -q ${origin} ${local}`, os.tmpdir());
+    sh('git config user.email test@test.local', local);
+    sh('git config user.name test', local);
+    sh('git config commit.gpgsign false', local);
+
+    // Advance origin/main by many commits (upstream moves on).
+    for (let i = 0; i < 20; i++) {
+      fs.writeFileSync(path.join(origin, `up${i}.txt`), `${i}\n`);
+      sh(`git add up${i}.txt`, origin);
+      sh(`git commit -q -m "upstream ${i}"`, origin);
+    }
+    // Local fetches the new remote-tracking ref, but its LOCAL main stays stale.
+    sh('git fetch -q origin', local);
+
+    // Cut a feature branch from the CURRENT upstream tip (origin/main) and add
+    // one ticket commit — exactly what a fresh pool ticket looks like.
+    sh('git checkout -q -b feature/ticket origin/main', local);
+    fs.writeFileSync(path.join(local, 'ticket.txt'), 'the one real change\n');
+    sh('git add ticket.txt', local);
+    sh('git commit -q -m "ticket: implement"', local);
+
+    // Stale local `main` is 20 commits behind: naive `main..HEAD` is huge.
+    const staleCount = parseInt(sh('git rev-list --count main..HEAD', local), 10);
+    assert.ok(staleCount >= 21,
+      `precondition: stale local main..HEAD sweeps in upstream commits (got ${staleCount})`);
+
+    // resolveDiffBase should pick the origin/main branch point → only the
+    // ticket's own commit.
+    const base = resolveDiffBase(local, 'main');
+    const scopedCount = parseInt(sh(`git rev-list --count ${base}..HEAD`, local), 10);
+    assert.strictEqual(scopedCount, 1,
+      `resolveDiffBase must scope the diff to the ticket's own commit (got ${scopedCount})`);
+    const files = sh(`git log ${base}..HEAD --name-only --format=""`, local)
+      .split('\n').map(s => s.trim()).filter(Boolean);
+    assert.deepStrictEqual([...new Set(files)], ['ticket.txt'],
+      'diff must list only the file the ticket changed, not upstream churn');
+
+    console.log('PASS: resolveDiffBase ignores a stale local default branch');
+  } finally {
+    cleanupRepo(origin);
+    fs.rmSync(local, { recursive: true, force: true });
+  }
+})();
+
+// ── resolveDiffBase falls back to the local ref when no origin exists
+//    (repos without a remote must still produce a sensible diff base).
+(function testResolveDiffBaseFallsBackWithoutRemote() {
+  function resolveDiffBase(cwd, base) {
+    let best = null;
+    let bestCount = Infinity;
+    for (const ref of [`origin/${base}`, base]) {
+      let branchPoint;
+      try { branchPoint = sh(`git merge-base ${ref} HEAD`, cwd); } catch { continue; }
+      let count;
+      try { count = parseInt(sh(`git rev-list --count ${branchPoint}..HEAD`, cwd), 10); } catch { continue; }
+      if (Number.isFinite(count) && count < bestCount) {
+        bestCount = count;
+        best = branchPoint;
+      }
+    }
+    return best || base;
+  }
+
+  const repo = makeRepo(); // makeRepo creates `main`, no remote
+  try {
+    sh('git checkout -q -b feature/ticket main', repo);
+    fs.writeFileSync(path.join(repo, 'ticket.txt'), 'change\n');
+    sh('git add ticket.txt', repo);
+    sh('git commit -q -m "ticket: implement"', repo);
+
+    const base = resolveDiffBase(repo, 'main');
+    // No origin/main ref exists; must fall back to the local main branch point.
+    const scopedCount = parseInt(sh(`git rev-list --count ${base}..HEAD`, repo), 10);
+    assert.strictEqual(scopedCount, 1,
+      `without a remote, resolveDiffBase falls back to local main (got ${scopedCount})`);
+
+    console.log('PASS: resolveDiffBase falls back to local ref when no remote exists');
+  } finally {
+    cleanupRepo(repo);
+  }
+})();
+
 console.log('\n✅ All git-workflow tests passed\n');

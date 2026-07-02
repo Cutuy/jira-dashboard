@@ -258,6 +258,31 @@ function escShell(str) {
   return str.replace(/[\\'"$`]/g, '\\$&');
 }
 
+// Resolve the commit to diff a ticket branch against. Pool worktrees are
+// long-lived and never fetch, so the LOCAL default-branch ref (e.g. `develop`)
+// goes stale — hundreds of commits behind origin. Diffing against it sweeps in
+// every commit merged upstream since the worktree was provisioned (thousands of
+// unrelated files). We instead pick the branch point (`merge-base`) that sits
+// closest to HEAD across the local ref and its `origin/` remote-tracking ref,
+// which yields just the branch's own commits. Returns a SHA, or the raw
+// branchDefault name if nothing resolves (e.g. no remote configured).
+function resolveDiffBase(worktreePath) {
+  const base = config.branchDefault;
+  let best = null;
+  let bestCount = Infinity;
+  for (const ref of [`origin/${base}`, base]) {
+    let branchPoint;
+    try { branchPoint = runGit(`merge-base ${ref} HEAD`, worktreePath); } catch { continue; }
+    let count;
+    try { count = parseInt(runGit(`rev-list --count ${branchPoint}..HEAD`, worktreePath), 10); } catch { continue; }
+    if (Number.isFinite(count) && count < bestCount) {
+      bestCount = count;
+      best = branchPoint;
+    }
+  }
+  return best || base;
+}
+
 // Pop the worktree's stash (if any) and re-stage all changes.
 // `git stash pop` (without --index) restores changes as unstaged, which
 // leaves the worktree in a "dirty but unstaged" state that's easy to miss
@@ -936,7 +961,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
 
     let diffSummary = '';
     try {
-      diffSummary = runGit(`log ${config.branchDefault}..HEAD --stat`, worktreePath);
+      diffSummary = runGit(`log ${resolveDiffBase(worktreePath)}..HEAD --stat`, worktreePath);
     } catch {}
     if (!diffSummary) {
       try { diffSummary = runGit(`diff --stat HEAD`, worktreePath); } catch { diffSummary = '(no diff)'; }
@@ -1348,15 +1373,16 @@ app.get('/api/tickets/:id/diff', (req, res) => {
     return res.json({ diff: '(no worktree available)', files: [], explorer_prefix: null });
   }
   try {
-    let diff = runGit(`log ${config.branchDefault}..HEAD --oneline --stat`, ticket.worktree_path);
+    const base = resolveDiffBase(ticket.worktree_path);
+    let diff = runGit(`log ${base}..HEAD --oneline --stat`, ticket.worktree_path);
     let files = [];
     if (!diff) {
       // No commits ahead of default branch — changes may have been
       // incorporated via cherry-pick/merge. Show diff from merge-base.
-      diff = runGit(`diff ${config.branchDefault}...HEAD --stat`, ticket.worktree_path);
+      diff = runGit(`diff ${base}...HEAD --stat`, ticket.worktree_path);
       if (diff) {
         try {
-          const nameOnly = runGit(`log ${config.branchDefault}...HEAD --name-only --format=""`, ticket.worktree_path);
+          const nameOnly = runGit(`log ${base}...HEAD --name-only --format=""`, ticket.worktree_path);
           files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
         } catch {}
         diff = `(commits already in ${config.branchDefault} — showing diff from merge-base)\n${diff}`;
@@ -1365,7 +1391,7 @@ app.get('/api/tickets/:id/diff', (req, res) => {
       }
     } else {
       try {
-        const nameOnly = runGit(`log ${config.branchDefault}..HEAD --name-only --format=""`, ticket.worktree_path);
+        const nameOnly = runGit(`log ${base}..HEAD --name-only --format=""`, ticket.worktree_path);
         files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
       } catch {}
     }
