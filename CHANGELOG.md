@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Configurable implement-stage timeout** — `JIRA_IMPLEMENT_TIMEOUT` (ms) tunes the wall-clock limit; `JIRA_IMPLEMENT_TIMEOUT_DISABLED=true` removes it entirely for long-running local models or large tickets.
+
+### Fixed
+
+- **Crash-resumable coder sessions** — the coder session id is now minted client-side and persisted *before* the process spawns (Claude backend, via `--session-id`), so a server crash or restart mid-run no longer loses the conversation. The next run resumes the same session with `-r`; if the session was never created on disk, it transparently falls back to a fresh session under the same id.
+
 ## [0.1.0] — 2026-07-01
 
 The first public release. Dogfooded on the jira-dashboard repo itself.

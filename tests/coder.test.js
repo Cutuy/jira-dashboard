@@ -204,7 +204,16 @@ function cleanupMock() {
     'new session args must use --output-format stream-json with --verbose, not --format'
   );
 
-  const argsResume = backend.buildArgs('continue fixing', 'sess-123', null);
+  // A client-assigned session id on a NEW conversation uses --session-id so a
+  // crash can persist-then-resume it. This is the {resume:false} path.
+  const argsAssign = backend.buildArgs('start work', 'sess-123', null, { resume: false });
+  assert.deepStrictEqual(
+    argsAssign,
+    ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '--dangerously-skip-permissions', '--session-id', 'sess-123', 'start work'],
+    'new session with a client-assigned id must use --session-id <id>'
+  );
+
+  const argsResume = backend.buildArgs('continue fixing', 'sess-123', null, { resume: true });
   assert.deepStrictEqual(
     argsResume,
     ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '--dangerously-skip-permissions', '-r', 'sess-123', 'continue fixing'],
@@ -214,7 +223,7 @@ function cleanupMock() {
   // In headless `-p` mode there is no interactive approval, so file-editing
   // tools are auto-denied unless permissions are bypassed. Without this flag
   // the implement stage silently produces zero changes.
-  for (const args of [argsNew, argsResume]) {
+  for (const args of [argsNew, argsAssign, argsResume]) {
     assert.ok(
       args.includes('--dangerously-skip-permissions'),
       'claude buildArgs must bypass permissions so implement can edit files'
@@ -223,7 +232,7 @@ function cleanupMock() {
 
   // Sanity: the args must never contain a bare `--format` token, which is
   // what `claude` rejects. This guards against a copy-paste from opencode.js.
-  for (const args of [argsNew, argsResume]) {
+  for (const args of [argsNew, argsAssign, argsResume]) {
     assert.ok(
       !args.includes('--format'),
       'claude buildArgs must not emit --format (claude CLI rejects it)'
@@ -316,6 +325,57 @@ function cleanupMock() {
   assert.ok(typeof result === 'string', 'run with claude type should return string');
   console.log('PASS: run with claude type resolves');
 
+  cleanupMock();
+})();
+
+// ── Claude client-assigned session id (crash-resumable) ────
+(function testClaudeNewSessionId() {
+  const store = require('../coder/store');
+  const mockConfig = { projectDir: '/tmp', venv: { dir: '.venv' }, venvBin() { return '/tmp/.venv/bin'; } };
+  const backend = require('../coder/claude')(mockConfig, store);
+
+  const id = backend.newSessionId();
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    'newSessionId must return a UUID claude accepts for --session-id');
+  assert.notStrictEqual(backend.newSessionId(), id, 'each call yields a fresh id');
+  console.log('PASS: claude newSessionId returns a fresh UUID');
+})();
+
+(function testClaudeMissingSessionError() {
+  const store = require('../coder/store');
+  const mockConfig = { projectDir: '/tmp', venv: { dir: '.venv' }, venvBin() { return '/tmp/.venv/bin'; } };
+  const backend = require('../coder/claude')(mockConfig, store);
+
+  assert.ok(
+    backend.isMissingSessionError(new Error('Coder exited 1: No conversation found with session ID: abc')),
+    'must recognize the missing-session stderr so the resume can fall back to a fresh run'
+  );
+  assert.ok(!backend.isMissingSessionError(new Error('Coder exited 1: some other failure')),
+    'unrelated errors must not trigger the fresh-session fallback');
+  assert.ok(!backend.isMissingSessionError(undefined), 'null-safe on undefined error');
+  console.log('PASS: claude isMissingSessionError detects only the missing-session case');
+})();
+
+// coder.run must persist a session id BEFORE the process finishes (via
+// opts.onSession) for backends that mint their own — this is what survives a
+// crash mid-run. Uses the claude backend with bin=`echo` so no real CLI runs.
+(async function testRunFiresOnSessionForMintedId() {
+  injectMockConfig('claude'); // mock config sets bin='echo'
+  const coder = require('../coder');
+
+  let captured = null;
+  const result = await coder.run('do the thing', {
+    timeout: 2000,
+    onSession: (sid) => { captured = sid; },
+  });
+
+  assert.ok(typeof result === 'string', 'run resolves on the claude/echo path');
+  assert.match(
+    captured || '',
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    'onSession must fire with the minted UUID so it can be persisted pre-crash'
+  );
+  console.log('PASS: coder.run mints a session id and reports it via onSession');
   cleanupMock();
 })();
 
