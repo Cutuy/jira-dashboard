@@ -17,7 +17,8 @@
       "implement": 600000,
       "suggest": 120000,
       "test": 300000,
-      "command": 30000
+      "command": 30000,
+      "push": 600000
     }
   },
   "venv": {

@@ -140,6 +140,14 @@ function isClosed(ticketId) {
   return db.getTicket(ticketId)?.stage === 'closed';
 }
 
+// True when a ticket should no longer receive state updates — it was either
+// closed (terminal stage) or deleted (row gone). Used by fire-and-forget
+// background work (e.g. pushAndOpenPr) that can outlive a /close or /delete.
+function ticketGone(ticketId) {
+  const t = db.getTicket(ticketId);
+  return !t || t.stage === 'closed';
+}
+
 async function runCoder(ticketId, prompt, opts = {}) {
   const ticket = db.getTicket(ticketId);
   try {
@@ -254,8 +262,77 @@ function runGit(args, cwd) {
   }).trim();
 }
 
+// Async command runner — spawns through `bash -lc` so the event loop is not
+// blocked while a slow command runs (e.g. a `git push` that triggers a heavy
+// local pre-push hook). Resolves with trimmed stdout, rejects with stderr.
+// Spawned `detached` (its own process group) so a caller can kill the whole
+// tree — git + hook + ssh children — via killTicketProcess. `onSpawn` receives
+// the child so it can be registered for cancellation.
+function execAsync(command, cwd, timeout, onSpawn) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('bash', ['-lc', command], { cwd, timeout, detached: true });
+    if (onSpawn) onSpawn(proc);
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (d) => (out += d));
+    proc.stderr.on('data', (d) => (err += d));
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) resolve(out.trim());
+      else reject(new Error((err || out).trim() || `command exited with code ${code}`));
+    });
+  });
+}
+
 function escShell(str) {
   return str.replace(/[\\'"$`]/g, '\\$&');
+}
+
+// Push the ticket branch and open a PR in the background. The `git push` can be
+// slow when the repo has a heavy local pre-push hook, so this runs AFTER the
+// HTTP response is sent (via execAsync, which does not block the event loop).
+// While it runs the ticket stays in `review` with status `running`; on success
+// it advances to `done`, on failure it drops back to idle with the squashed
+// commit preserved on the branch so the user can retry `ready`.
+//
+// Because this runs after the response, the ticket can be closed or deleted
+// mid-push. The child is registered in runningProcs so /close and /delete can
+// kill it (and the git/hook/ssh subtree) before releasing the worktree, and
+// every terminal state write is guarded by ticketGone() so a completed push
+// never resurrects a ticket the user already closed or removed.
+async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
+  const pushTimeout = config.coder.timeouts.push || 600_000;
+  const cmdTimeout = config.coder.timeouts.command;
+  const register = (proc) => runningProcs.set(ticketId, proc);
+  try {
+    await execAsync(`git push origin ${branchName}`, worktreePath, pushTimeout, register);
+    if (ticketGone(ticketId)) return;
+    db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
+
+    let prUrl;
+    try {
+      prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""`, worktreePath, cmdTimeout, register);
+      db.logActivity(ticketId, 'pr_created', prUrl);
+    } catch {
+      const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout, register);
+      const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
+      prUrl = `https://github.com/${repoPath}/pull/new/${branchName}`;
+      db.logActivity(ticketId, 'pr_link', prUrl);
+    }
+
+    if (ticketGone(ticketId)) return;
+    db.updateTicket(ticketId, { stage: 'done', status: 'idle' });
+  } catch (err) {
+    if (ticketGone(ticketId)) return;
+    db.logActivity(
+      ticketId,
+      'ready_error',
+      `Push failed: ${err.message}. Squashed commit is still on branch ${branchName} in the worktree — ticket stays in review, retry when ready.`
+    );
+    db.updateTicketField(ticketId, 'status', 'idle');
+  } finally {
+    runningProcs.delete(ticketId);
+  }
 }
 
 // Resolve the commit to diff a ticket branch against. Pool worktrees are
@@ -1205,6 +1282,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
+  if (ticket.status === 'running') return res.status(409).json({ error: 'Already processing, wait for completion' });
 
   if (!ticket.worktree_path || !fs.existsSync(path.join(ticket.worktree_path, '.git'))) {
     const msg = `Worktree integrity check failed: ${ticket.worktree_path || '(unset)'}/.git is missing or invalid. Cherry-pick aborted.`;
@@ -1253,25 +1331,17 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     db.logActivity(ticket.id, 'committed', commitSha);
     assertWorktreeClean(ticket, { stage: 'cherry-pick' });
 
-    let prUrl = null;
     if (config.mergeStrategy === 'pr') {
-      runGit(`push origin ${ticket.branch_name}`, ticket.worktree_path);
-      db.logActivity(ticket.id, 'branch_pushed', `Pushed ${ticket.branch_name} to origin`);
-
-      try {
-        const prOutput = require('child_process').execSync(
-          `gh pr create --title "${ticket.id}: ${ticket.title}" --body ""`,
-          { cwd: ticket.worktree_path, encoding: 'utf-8', timeout: config.coder.timeouts.command }
-        ).trim();
-        prUrl = prOutput;
-        db.logActivity(ticket.id, 'pr_created', prUrl);
-      } catch {
-        const remoteUrl = runGit(`config --get remote.origin.url`, ticket.worktree_path);
-        const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
-        const prLink = `https://github.com/${repoPath}/pull/new/${ticket.branch_name}`;
-        prUrl = prLink;
-        db.logActivity(ticket.id, 'pr_link', prLink);
-      }
+      // Push + PR creation runs in the background — a slow local pre-push hook
+      // (or network round-trip) must not block and time out this request. The
+      // commit is already squashed onto the branch; the ticket stays in
+      // `review` with status `running` until the background task advances it to
+      // `done` on success (or drops it back to idle on failure, preserving the
+      // commit so the user can retry `ready`).
+      db.updateTicket(ticket.id, { commit_sha: commitSha, status: 'running' });
+      db.logActivity(ticket.id, 'pushing', `Pushing ${ticket.branch_name} and opening PR in the background…`);
+      pushAndOpenPr(ticket.id, ticket.branch_name, `${ticket.id}: ${ticket.title}`, ticket.worktree_path);
+      return res.json({ success: true, pending: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
     } else {
       try {
         runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
@@ -1312,9 +1382,9 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     }
 
     db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
-    if (config.mergeStrategy !== 'pr') worktrees.release(ticket.id);
+    worktrees.release(ticket.id);
 
-    res.json({ success: true, commit_sha: commitSha, pr_url: prUrl, ticket: db.getTicket(ticket.id) });
+    res.json({ success: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
   } catch (err) {
     const tail = commitSha
       ? ` Squashed commit ${commitSha.slice(0, 7)} is still on branch ${ticket.branch_name} in the worktree.`
@@ -1357,6 +1427,10 @@ app.post('/api/tickets/:id/close', (req, res) => {
 app.delete('/api/tickets/:id', (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+
+  // Stop any in-flight work (coder run or background push) before touching the
+  // worktree, so we don't remove a path a `git push`/`gh` child is still using.
+  killTicketProcess(ticket.id);
 
   // Return a pooled slot to the pool, or remove a per-ticket worktree.
   worktrees.release(ticket.id);
@@ -1551,6 +1625,20 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
   for (const tid of ids) {
     const t = db.getTicket(tid);
     if (t && t.status === 'running') {
+      // A background push (pushAndOpenPr) is a fire-and-forget child, not a
+      // coder session — nothing survives a restart, so a ticket left mid-push
+      // must be reset unconditionally. Detected via its latest activity marker;
+      // the session-liveness heuristic below doesn't apply (it may have a stale
+      // ocode_session from an earlier stage that still lists as "alive").
+      const latest = (t.activity || [])[0]?.action;
+      if (latest === 'pushing' || latest === 'branch_pushed') {
+        db.updateTicketField(tid, 'status', 'idle');
+        db.logActivity(tid, 'recovered', 'Server restarted mid-push — reset to idle; press Ready to push again.');
+        changed = true;
+        console.log(`Recovered: ${tid} reset to idle (interrupted push)`);
+        continue;
+      }
+
       let alive = false;
       if (t.ocode_session) {
         try {

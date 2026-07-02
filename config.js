@@ -142,6 +142,7 @@ const config = {
       suggest: 120_000,
       test: 300_000,
       command: 30_000,
+      push: 600_000,
     },
   },
 
