@@ -1,6 +1,8 @@
 # Jira Dashboard
 
-**From a one-line idea to a reviewed PR — in one board.**
+> **The only AI coding kanban that's self-hosted end-to-end — no companion daemon, no cloud account, no agent lock-in.**
+>
+> From a one-line idea to a reviewed PR — in one board.
 
 A kanban where AI coding agents are first-class teammates. Type a rough idea,
 a user complaint, a TODO scribbled in a doc — the agent asks clarifying
