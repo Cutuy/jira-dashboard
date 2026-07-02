@@ -79,9 +79,25 @@ function run(prompt, opts = {}) {
     return backend.runDummy(prompt);
   }
 
-  return new Promise((resolve, reject) => {
-    const args = backend.buildArgs(prompt, sessionId, title);
-    const spawnOpts = buildSpawnOptions(backend, opts);
+  // Resolve the session id to run under. When the caller has no id yet (the
+  // ticket's first run) and the backend supports client-assigned ids, mint one
+  // up front so we can hand it to the caller BEFORE spawning. Persisting it
+  // pre-spawn is what lets a crashed/restarted run resume the same LLM
+  // conversation instead of losing it.
+  let effectiveSessionId = sessionId || null;
+  let resuming = !!effectiveSessionId;
+  if (!effectiveSessionId && typeof backend.newSessionId === 'function') {
+    effectiveSessionId = backend.newSessionId();
+    resuming = false;
+  }
+  if (effectiveSessionId && typeof opts.onSession === 'function') {
+    try { opts.onSession(effectiveSessionId); } catch {}
+  }
+
+  const spawnOpts = buildSpawnOptions(backend, opts);
+
+  const attempt = (useResume) => new Promise((resolve, reject) => {
+    const args = backend.buildArgs(prompt, effectiveSessionId, title, { resume: useResume });
 
     const proc = spawn(config.coder.bin, args, spawnOpts);
     // Hand the live process to the caller so it can be force-killed (e.g. when
@@ -139,6 +155,19 @@ function run(prompt, opts = {}) {
       reject(err);
     });
   });
+
+  // Resuming can fail if the session was never actually created on disk — e.g.
+  // the prior run crashed before the backend wrote it. Fall back to starting a
+  // fresh conversation under the SAME id so the ticket can still make progress.
+  if (resuming) {
+    return attempt(true).catch(err => {
+      if (typeof backend.isMissingSessionError === 'function' && backend.isMissingSessionError(err)) {
+        return attempt(false);
+      }
+      throw err;
+    });
+  }
+  return attempt(false);
 }
 
 module.exports = { run, getStats, getLastSessionId, buildSpawnOptions, detectType };

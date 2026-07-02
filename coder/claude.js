@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 
 module.exports = function claudeBackend(config, store) {
   return {
@@ -6,7 +7,18 @@ module.exports = function claudeBackend(config, store) {
 
     stats() { return store.lastUsage; },
 
-    buildArgs(prompt, sessionId, title) {
+    // Claude accepts a client-assigned session id (`--session-id <uuid>`), so
+    // we mint one up front and persist it before spawning. That's what lets a
+    // crashed/restarted run resume the same conversation (see coder/index.js).
+    newSessionId() { return crypto.randomUUID(); },
+
+    // `-r <id>` on a session that was never created exits non-zero with this on
+    // stderr. Signals coder/index.js to retry as a fresh session under the id.
+    isMissingSessionError(err) {
+      return /no conversation found/i.test(err && err.message || '');
+    },
+
+    buildArgs(prompt, sessionId, title, runOpts = {}) {
       // NOTE: Claude Code uses `--output-format` (not `--format`). The latter
       // is an OpenCode flag and will be rejected by `claude` with
       //   error: unknown option '--format'
@@ -21,9 +33,16 @@ module.exports = function claudeBackend(config, store) {
       // flag the coder produces a text-only "I couldn't get permission" result,
       // makes zero file changes, and the commit is silently skipped
       // ("no uncommitted changes in worktree").
-      // Resume a previous session with `-r <sessionId>`.
+      // Session handling: `-r <id>` RESUMES an existing conversation, while
+      // `--session-id <id>` STARTS a new one under a client-chosen id. The two
+      // are not interchangeable — `-r` on a missing session errors ("no
+      // conversation found") and `--session-id` on an existing one errors
+      // ("already in use") — so pick based on runOpts.resume.
       const args = ['-p', '--verbose', '--output-format', 'stream-json', '--include-partial-messages', '--dangerously-skip-permissions'];
-      if (sessionId) args.push('-r', sessionId);
+      if (sessionId) {
+        if (runOpts.resume) args.push('-r', sessionId);
+        else args.push('--session-id', sessionId);
+      }
       args.push(prompt);
       return args;
     },
