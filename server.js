@@ -1627,15 +1627,43 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
     if (t && t.status === 'running') {
       // A background push (pushAndOpenPr) is a fire-and-forget child, not a
       // coder session — nothing survives a restart, so a ticket left mid-push
-      // must be reset unconditionally. Detected via its latest activity marker;
-      // the session-liveness heuristic below doesn't apply (it may have a stale
-      // ocode_session from an earlier stage that still lists as "alive").
+      // must be recovered here; the session-liveness heuristic below doesn't
+      // apply (it may have a stale ocode_session from an earlier stage that
+      // still lists as "alive", which would leave the ticket stuck `running`
+      // and blocking /ready with a 409 forever). We recover based on how far
+      // the push lifecycle got, tracked by the latest activity marker:
+      //   pushing                   → branch push never confirmed (else the
+      //                               next marker would be logged). Reset to
+      //                               idle so the user can retry (re-squash +
+      //                               push) — nothing is on origin yet.
+      //   branch_pushed             → branch IS on origin; re-pushing would be
+      //   pr_created / pr_link        a non-fast-forward. Only PR creation
+      //                               and/or the final `done` transition were
+      //                               lost, both of which we finish here
+      //                               WITHOUT touching git history.
       const latest = (t.activity || [])[0]?.action;
-      if (latest === 'pushing' || latest === 'branch_pushed') {
+      if (latest === 'pushing') {
         db.updateTicketField(tid, 'status', 'idle');
         db.logActivity(tid, 'recovered', 'Server restarted mid-push — reset to idle; press Ready to push again.');
         changed = true;
         console.log(`Recovered: ${tid} reset to idle (interrupted push)`);
+        continue;
+      }
+      if (latest === 'branch_pushed' || latest === 'pr_created' || latest === 'pr_link') {
+        // Branch already landed on origin — do NOT re-push. If PR creation was
+        // the interrupted step (latest is branch_pushed), leave a fallback
+        // "open PR" link so the user can create it manually, then finalize.
+        if (latest === 'branch_pushed') {
+          try {
+            const remoteUrl = runGit(`config --get remote.origin.url`, t.worktree_path);
+            const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
+            db.logActivity(tid, 'pr_link', `https://github.com/${repoPath}/pull/new/${t.branch_name}`);
+          } catch {}
+        }
+        db.updateTicket(tid, { stage: 'done', status: 'idle' });
+        db.logActivity(tid, 'recovered', 'Server restarted after branch push — finalized to done (branch already on origin).');
+        changed = true;
+        console.log(`Recovered: ${tid} finalized to done (push completed before restart)`);
         continue;
       }
 
