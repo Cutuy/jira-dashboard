@@ -668,7 +668,7 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
-interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; branchDefault?: string }
+interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; branchDefault?: string; mergeStrategy?: string }
 
 export default function App() {
   const [tickets, setTickets] = useState<T[]>([])
@@ -985,7 +985,8 @@ export default function App() {
   }
 
   async function ready(id: string) {
-    if (!confirm('Commit, cherry-pick into main, and close?')) return
+    const action = cfg.mergeStrategy === 'pr' ? 'open a PR' : `cherry-pick into ${cfg.branchDefault || 'main'}`
+    if (!confirm(`Commit, ${action}, and close?`)) return
     setBusy(true)
     try {
       const d: any = await fetchJSON(`/api/tickets/${id}/ready`, { method: 'POST' })
@@ -1752,7 +1753,7 @@ export default function App() {
                   Send Feedback
                 </Btn>
                 <Btn onClick={() => ready(sel.id)} disabled={busy}>
-                  Ready <ArrowRight className="h-3.5 w-3.5" /> Cherry-pick
+                  Ready <ArrowRight className="h-3.5 w-3.5" /> {cfg.mergeStrategy === 'pr' ? 'PR' : 'Cherry-pick'}
                 </Btn>
               </>
             )}
