@@ -131,8 +131,11 @@ function acquire(ticket) {
 
       // Create the worktree with a fresh branch off the default branch in one
       // step. This NEVER touches the main checkout's working tree — it's a
-      // metadata operation that writes a new branch ref and worktree dir.
-      git(`worktree add -b ${branchName} ${worktreePath} ${config.branchDefault}`);
+      // metadata operation that writes a new branch ref and worktree dir. Base
+      // off the freshly-fetched upstream tip, not the stale local ref, so a new
+      // ticket doesn't start weeks behind origin (see pool.freshDefaultBase).
+      const base = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault: config.branchDefault });
+      git(`worktree add -b ${branchName} ${worktreePath} ${base}`);
     }
   }
 

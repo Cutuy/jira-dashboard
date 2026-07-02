@@ -27,6 +27,7 @@ const path = require('path');
 const MAX_BUFFER = 256 * 1024 * 1024; // 256 MB
 const DEFAULT_TIMEOUT = 300_000; // 5 min for resets/checkouts
 const ADD_TIMEOUT = 900_000; // 15 min for the initial worktree checkout
+const FETCH_TIMEOUT = 600_000; // 10 min: first fetch of a big monorepo branch
 
 function git(args, cwd, timeout = DEFAULT_TIMEOUT) {
   return execSync(`git ${args}`, {
@@ -35,6 +36,30 @@ function git(args, cwd, timeout = DEFAULT_TIMEOUT) {
     timeout,
     maxBuffer: MAX_BUFFER,
   }).trim();
+}
+
+// Resolve the freshest base ref to branch a ticket off, refreshing from the
+// remote first. Pool worktrees are long-lived and nothing else fetches, so the
+// LOCAL default-branch ref (e.g. `develop`) drifts behind origin — observed ~2
+// weeks stale on a busy monorepo — and every ticket would start off an ancient
+// base. We fetch the default branch from `remote` (best-effort) and prefer the
+// updated `<remote>/<branchDefault>` remote-tracking ref; if there is no remote
+// (offline / local-only repo) or the fetch fails, we fall back to the local
+// ref so those setups still work. Returns a ref name suitable for `checkout -B`
+// / `worktree add`.
+function freshDefaultBase({ cwd, branchDefault, remote = 'origin' }) {
+  const remoteRef = `${remote}/${branchDefault}`;
+  try {
+    // A single-branch fetch updates the <remote>/<branch> tracking ref on a
+    // standard clone; keep it scoped so we don't pull every branch of a monorepo.
+    git(`fetch ${remote} ${branchDefault}`, cwd, FETCH_TIMEOUT);
+  } catch { /* offline or no such remote — fall back to the local ref below */ }
+  try {
+    git(`rev-parse --verify --quiet ${remoteRef}^{commit}`, cwd);
+    return remoteRef;
+  } catch {
+    return branchDefault;
+  }
 }
 
 // Absolute path of the i-th pool worktree.
@@ -101,14 +126,16 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
 
 // Reset a pool worktree to a clean checkout of a fresh feature branch, ready
 // for a ticket. Assumes the slot is a valid (idle, detached) pool worktree.
-function acquireSlot({ worktreePath, branchDefault, branchName }) {
+function acquireSlot({ worktreePath, branchDefault, branchName, remote = 'origin' }) {
   try { git('rebase --abort 2>/dev/null', worktreePath); } catch { /* no rebase in progress */ }
   git('reset --hard', worktreePath);
   git('clean -fd', worktreePath);
-  // -B creates or resets the feature branch at the current default-branch tip
-  // and checks it out — this is the metadata-only equivalent of the old
-  // per-ticket `worktree add -b`, minus the full checkout cost.
-  git(`checkout -B ${branchName} ${branchDefault}`, worktreePath);
+  // Refresh from the remote and branch off the CURRENT upstream tip rather than
+  // the stale local ref (see freshDefaultBase). -B creates or resets the
+  // feature branch at that tip and checks it out — the metadata-only equivalent
+  // of the old per-ticket `worktree add -b`, minus the full checkout cost.
+  const base = freshDefaultBase({ cwd: worktreePath, branchDefault, remote });
+  git(`checkout -B ${branchName} ${base}`, worktreePath);
 }
 
 // Return a pool worktree to its idle state: clean, detached at the default
@@ -130,6 +157,7 @@ module.exports = {
   poolPaths,
   isValidWorktree,
   isPoolWorktree,
+  freshDefaultBase,
   provisionPool,
   acquireSlot,
   releaseSlot,

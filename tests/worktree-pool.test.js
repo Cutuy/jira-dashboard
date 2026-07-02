@@ -154,4 +154,64 @@ function linkedWorktrees(repo) {
   console.log('PASS: isPoolWorktree matches only <worktreesDir>/pool-N');
 })();
 
+// ── acquireSlot bases the feature branch on the FRESH origin tip, not the
+//    stale local default-branch ref. Pool worktrees never fetch on their own,
+//    so the local `main`/`develop` ref drifts behind origin; a new ticket must
+//    still start from the current upstream tip (freshDefaultBase). ──
+(function testAcquireSlotUsesFreshOriginBase() {
+  const origin = makeRepo(); // acts as the remote
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-pool-clone-'));
+  try {
+    sh(`git clone -q ${origin} ${clone}`, os.tmpdir());
+    sh('git config user.email test@test.local', clone);
+    sh('git config user.name test', clone);
+    sh('git config commit.gpgsign false', clone);
+
+    const worktreesDir = path.join(clone, '.worktrees');
+    pool.provisionPool({ projectDir: clone, worktreesDir, branchDefault: 'main', count: 1 });
+
+    // Upstream moves on AFTER the pool was provisioned — the local `main` ref
+    // in the clone is now stale.
+    fs.writeFileSync(path.join(origin, 'upstream.txt'), 'new upstream work\n');
+    sh('git add upstream.txt', origin);
+    sh('git commit -q -m "upstream advances"', origin);
+    const originTip = sh('git rev-parse main', origin);
+    const staleLocalTip = sh('git rev-parse main', clone);
+    assert.notStrictEqual(originTip, staleLocalTip,
+      'precondition: local main is behind origin/main');
+
+    // Acquire: freshDefaultBase should fetch and branch off origin/main's tip.
+    const wt = path.join(worktreesDir, 'pool-0');
+    pool.acquireSlot({ worktreePath: wt, branchDefault: 'main', branchName: 'feature/fresh' });
+
+    const branchBase = sh('git rev-parse HEAD', wt);
+    assert.strictEqual(branchBase, originTip,
+      'acquired feature branch is based on the fresh origin/main tip');
+    assert.notStrictEqual(branchBase, staleLocalTip,
+      'acquired feature branch is NOT based on the stale local main');
+
+    console.log('PASS: acquireSlot bases the feature branch on the fresh origin tip');
+  } finally {
+    cleanupRepo(origin);
+    cleanupRepo(clone);
+  }
+})();
+
+// ── freshDefaultBase falls back to the local ref when there is no remote,
+//    so offline / local-only repos keep working. ──
+(function testFreshDefaultBaseFallsBackWithoutRemote() {
+  const repo = makeRepo(); // plain repo, no remote configured
+  try {
+    const base = pool.freshDefaultBase({ cwd: repo, branchDefault: 'main' });
+    assert.strictEqual(base, 'main',
+      'with no remote, freshDefaultBase returns the local branch name');
+    // And it still resolves to a real commit.
+    assert.strictEqual(sh(`git rev-parse ${base}`, repo), sh('git rev-parse main', repo),
+      'fallback ref points at the local main tip');
+    console.log('PASS: freshDefaultBase falls back to the local ref without a remote');
+  } finally {
+    cleanupRepo(repo);
+  }
+})();
+
 console.log('\n✅ All worktree-pool tests passed\n');
