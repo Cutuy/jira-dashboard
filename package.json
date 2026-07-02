@@ -6,13 +6,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/config.test.js && node tests/prompts.test.js && node tests/coder.test.js && node tests/server-helpers.test.js && node tests/git-workflow.test.js && node tests/worktree-pool.test.js",
+    "test": "node tests/config.test.js && node tests/prompts.test.js && node tests/coder.test.js && node tests/server-helpers.test.js && node tests/git-workflow.test.js && node tests/worktree-pool.test.js && node tests/worktree-manager.test.js",
     "test:config": "node tests/config.test.js",
     "test:prompts": "node tests/prompts.test.js",
     "test:coder": "node tests/coder.test.js",
     "test:helpers": "node tests/server-helpers.test.js",
     "test:git": "node tests/git-workflow.test.js",
     "test:pool": "node tests/worktree-pool.test.js",
+    "test:wtmgr": "node tests/worktree-manager.test.js",
     "prepush": "bash .githooks/pre-push"
   },
   "dependencies": {
