@@ -1460,6 +1460,9 @@ async function generateSuggestions(retries = 3) {
     try {
       const visionPath = path.join(config.projectDir, 'docs', 'vision.md');
       const vision = fs.existsSync(visionPath) ? fs.readFileSync(visionPath, 'utf-8') : '';
+      const visionSection = vision.trim()
+        ? vision
+        : `_No vision document found at ${visionPath}. Infer the project's direction by exploring the codebase in the project root above._`;
 
       const sugDir = path.join(config.ticketContextDir(SUGGESTIONS_TICKET_ID));
       fs.mkdirSync(sugDir, { recursive: true });
@@ -1467,10 +1470,10 @@ async function generateSuggestions(retries = 3) {
       fs.writeFileSync(contextFile,
         `# Suggestion generation context\n\n_Generated ${new Date().toISOString()}._\n\n` +
         `## Project root\n\n\`\`\`\n${config.projectDir}\n\`\`\`\n\n` +
-        `## Project vision (${visionPath})\n\n${vision}\n`
+        `## Project vision (${visionPath})\n\n${visionSection}\n`
       );
 
-      const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nRead vision + project root at: ${contextFile}`;
+      const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nExplore the codebase in the project root, then read the context file at: ${contextFile}`;
       const output = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest, cwd: config.projectDir });
       const jsonMatch = output.match(/\{[\s\S]*\}/);
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;

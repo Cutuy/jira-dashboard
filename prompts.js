@@ -77,7 +77,11 @@ Output ONLY valid JSON — no markdown, no explanation, no code fences:
   "notes": "Optional: why these questions matter"
 }`,
 
-  suggest: `You are suggesting feature tickets for the ${PNAME} project. Read the vision document at the path in the context file. Suggest tickets that advance the vision — new primitives, new provider backends, extension ideas, integration with existing tools, or improvements that reduce environment coupling. NO bug fixes, NO cleanup tickets, NO refactors.
+  suggest: `You are suggesting feature tickets for the ${PNAME} project, whose code is in your current working directory (${PDIR}).
+
+First, understand what this project actually is and does. Explore the codebase: read the README, look at the top-level directory structure, and skim the main modules and any docs/ to grasp the project's purpose, domain, and current capabilities. Then read the context file referenced below — if it contains a project vision, treat that as the primary guide for where the project is headed; if the vision section is empty, infer the project's direction from the codebase itself.
+
+Suggest concrete feature tickets that advance THIS project — new capabilities, meaningful extensions of existing features, or integrations that fit the project's actual domain and tech stack. Ground every suggestion in something you observed in the codebase or vision. Do NOT suggest generic features that could apply to any project. NO bug fixes, NO cleanup tickets, NO refactors.
 
 Output ONLY valid JSON — no markdown, no explanation:
 
