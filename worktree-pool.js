@@ -131,11 +131,14 @@ function acquireSlot({ worktreePath, branchDefault, branchName, remote = 'origin
   git('reset --hard', worktreePath);
   git('clean -fd', worktreePath);
   // Refresh from the remote and branch off the CURRENT upstream tip rather than
-  // the stale local ref (see freshDefaultBase). -B creates or resets the
-  // feature branch at that tip and checks it out — the metadata-only equivalent
-  // of the old per-ticket `worktree add -b`, minus the full checkout cost.
+  // the stale local ref (see freshDefaultBase). -B creates or resets the feature
+  // branch at that tip and checks it out. Unlike the old base (the local ref the
+  // idle slot already sat on, a metadata-only move), the fresh upstream tip can
+  // be far ahead — the checkout then rewrites the whole working tree, which on a
+  // large monorepo is as costly as the initial `worktree add`, so it gets the
+  // longer ADD_TIMEOUT rather than the 5-min default.
   const base = freshDefaultBase({ cwd: worktreePath, branchDefault, remote });
-  git(`checkout -B ${branchName} ${base}`, worktreePath);
+  git(`checkout -B ${branchName} ${base}`, worktreePath, ADD_TIMEOUT);
 }
 
 // Return a pool worktree to its idle state: clean, detached at the default
