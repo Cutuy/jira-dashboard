@@ -146,10 +146,18 @@ async function runCoder(ticketId, prompt, opts = {}) {
     return await coder.run(prompt, {
       sessionId: ticket?.ocode_session,
       title: `ticket-${ticketId}`,
-      timeout: opts.timeout || config.coder.timeouts.clarify,
+      // `??` not `||`: a timeout of 0 means "no timeout" (disabled) and must
+      // not fall through to the clarify default.
+      timeout: opts.timeout ?? config.coder.timeouts.clarify,
       onProgress: opts.onProgress,
       cwd: opts.cwd,
       onSpawn: (proc) => runningProcs.set(ticketId, proc),
+      // Persist the coder session id the moment it's known — for backends that
+      // support client-assigned ids this fires BEFORE the process spawns, so a
+      // server crash mid-run can't lose it and the LLM conversation can be
+      // resumed on the next run. captureSessionId() below is the post-run
+      // fallback for backends that only surface their id in the output stream.
+      onSession: (sid) => { try { db.updateTicketField(ticketId, 'ocode_session', sid); } catch {} },
     });
   } finally {
     runningProcs.delete(ticketId);
@@ -888,7 +896,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
     };
 
     const output = await runCoder(ticket.id, prompt, {
-      timeout: config.coder.timeouts.implement,
+      timeout: config.coder.implementTimeoutDisabled ? 0 : config.coder.timeouts.implement,
       onProgress,
     });
 

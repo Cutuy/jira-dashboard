@@ -136,13 +136,20 @@ const config = {
   coder: {
     type: env('JIRA_CODER_TYPE') || cfg.coder?.type || 'opencode',
     bin: env('JIRA_CODER_BIN') || cfg.coder?.bin || 'opencode',
-    timeouts: cfg.coder?.timeouts || {
-      clarify: 180_000,
-      implement: 600_000,
-      suggest: 120_000,
-      test: 300_000,
-      command: 30_000,
+    timeouts: {
+      clarify: cfg.coder?.timeouts?.clarify || 180_000,
+      // The implementation stage can run for a long time on large tickets or
+      // slow/local models. `JIRA_IMPLEMENT_TIMEOUT` tunes the wall-clock limit;
+      // `JIRA_IMPLEMENT_TIMEOUT_DISABLED=true` removes it entirely (see below).
+      implement: parseInt(env('JIRA_IMPLEMENT_TIMEOUT')) || cfg.coder?.timeouts?.implement || 600_000,
+      suggest: cfg.coder?.timeouts?.suggest || 120_000,
+      test: cfg.coder?.timeouts?.test || 300_000,
+      command: cfg.coder?.timeouts?.command || 30_000,
     },
+    // When true, the implementation stage spawns the coder with no timeout at
+    // all (spawn `timeout: 0`). Use for long-running local models or big
+    // tickets where the default 10-minute cap kills productive runs mid-flight.
+    implementTimeoutDisabled: env('JIRA_IMPLEMENT_TIMEOUT_DISABLED') === 'true',
   },
 
   // Python venv

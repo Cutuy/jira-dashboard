@@ -185,6 +185,43 @@ try {
   });
 })();
 
+// ── Implement-stage timeout override + disable flag ────────
+(function testImplementTimeoutDefaults() {
+  withProjectDir(() => {
+    withoutEnv(() => {
+      const cfg = reloadConfig();
+      assert.strictEqual(cfg.coder.timeouts.implement, 600000, 'implement timeout defaults to 600000 from config.json');
+      assert.strictEqual(cfg.coder.implementTimeoutDisabled, false, 'implement timeout is enabled by default');
+      console.log('PASS: implement timeout has correct defaults');
+    });
+  });
+})();
+
+(function testImplementTimeoutEnvOverride() {
+  withProjectDir(() => {
+    withEnv([
+      'JIRA_IMPLEMENT_TIMEOUT=1800000',
+    ].join('\n'), () => {
+      const cfg = reloadConfig();
+      assert.strictEqual(cfg.coder.timeouts.implement, 1800000, 'JIRA_IMPLEMENT_TIMEOUT overrides the implement timeout');
+      assert.strictEqual(cfg.coder.implementTimeoutDisabled, false, 'a numeric override does not disable the timeout');
+      console.log('PASS: JIRA_IMPLEMENT_TIMEOUT overrides implement timeout');
+    });
+  });
+})();
+
+(function testImplementTimeoutDisabled() {
+  withProjectDir(() => {
+    withEnv([
+      'JIRA_IMPLEMENT_TIMEOUT_DISABLED=true',
+    ].join('\n'), () => {
+      const cfg = reloadConfig();
+      assert.strictEqual(cfg.coder.implementTimeoutDisabled, true, 'JIRA_IMPLEMENT_TIMEOUT_DISABLED=true disables the implement timeout');
+      console.log('PASS: JIRA_IMPLEMENT_TIMEOUT_DISABLED disables the implement timeout');
+    });
+  });
+})();
+
 // ── config.json overrides when .env is absent ──────────────
 (function testConfigJsonOverrides() {
   withProjectDir(() => {
