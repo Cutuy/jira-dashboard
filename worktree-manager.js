@@ -50,14 +50,22 @@ function branchNameFor(ticketId) {
   return `feature/${safeId(ticketId)}`;
 }
 
+// Creating a per-ticket worktree writes a full working tree and, after the
+// upstream fetch, may check out a tip far ahead of local state — as costly as
+// the pool's initial `worktree add`. Give that one call the same generous
+// ceiling the pool uses (worktree-pool ADD_TIMEOUT) rather than the 30s command
+// default, or a big monorepo checkout hits ETIMEDOUT.
+const WORKTREE_ADD_TIMEOUT = 900_000; // 15 min
+
 // git in the main checkout (or a given worktree). Mirrors server.js's runGit
-// timeout so per-ticket behavior is unchanged, but with a large buffer so big
-// `git worktree list` / status output can't overflow (ENOBUFS).
-function git(args, cwd) {
+// timeout by default, but with a large buffer so big `git worktree list` /
+// status output can't overflow (ENOBUFS). Pass `timeout` to override for
+// operations (like `worktree add`) that legitimately run longer.
+function git(args, cwd, timeout = config.coder.timeouts.command) {
   return execSync(`git ${args}`, {
     cwd: cwd || config.projectDir,
     encoding: 'utf-8',
-    timeout: config.coder.timeouts.command,
+    timeout,
     maxBuffer: 256 * 1024 * 1024,
   }).trim();
 }
@@ -135,7 +143,7 @@ function acquire(ticket) {
       // off the freshly-fetched upstream tip, not the stale local ref, so a new
       // ticket doesn't start weeks behind origin (see pool.freshDefaultBase).
       const base = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault: config.branchDefault });
-      git(`worktree add -b ${branchName} ${worktreePath} ${base}`);
+      git(`worktree add -b ${branchName} ${worktreePath} ${base}`, undefined, WORKTREE_ADD_TIMEOUT);
     }
   }
 
