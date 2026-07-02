@@ -1511,7 +1511,7 @@ export default function App() {
                       <Section title="Live status">
                         <div className="flex items-center gap-2 t-body text-ink-2 mb-3">
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          {(sel.activity || [])[0]?.action === 'pushing'
+                          {['pushing', 'branch_pushed'].includes((sel.activity || [])[0]?.action ?? '')
                             ? 'Pushing branch and opening PR…'
                             : 'Resolving rebase conflicts…'}
                         </div>
