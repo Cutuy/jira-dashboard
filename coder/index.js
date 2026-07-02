@@ -64,6 +64,10 @@ function buildSpawnOptions(backend, opts = {}) {
     env: { ...process.env, ...backend.buildEnv() },
     timeout,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Own process group so the whole coder tree (the CLI plus any git /
+    // language-server children it spawns) can be killed together when a
+    // ticket is closed mid-run — a plain kill only hits the group leader.
+    detached: true,
   };
 }
 
@@ -80,6 +84,9 @@ function run(prompt, opts = {}) {
     const spawnOpts = buildSpawnOptions(backend, opts);
 
     const proc = spawn(config.coder.bin, args, spawnOpts);
+    // Hand the live process to the caller so it can be force-killed (e.g. when
+    // a ticket is closed mid-run) without waiting for it to finish.
+    if (typeof opts.onSpawn === 'function') opts.onSpawn(proc);
 
     let stdout = '';
     let stderr = '';
