@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-07-02
+
+The "Claude is a first-class backend" release. Validated end-to-end against
+a fresh machine with Claude Code installed, and added the test coverage to
+keep it that way.
+
+### Added
+
+- **Validated Claude Code backend.** Confirmed the claude CLI uses `--output-format`
+  (not `--format`); `coder/claude.js` now emits the correct flags end-to-end and
+  parses `stream-json` events back into the dashboard's live progress stream.
+  Resume via `-r <sessionId>` is supported. (-PR: `34cbbec`)
+- **Auto-detection of coder type from binary name.** When `JIRA_CODER_TYPE`
+  is left at the default `opencode` (the common case), the dashboard now
+  inspects `JIRA_CODER_BIN` and selects the matching backend automatically —
+  `bin=claude` → claude, `bin=codex` → codex, otherwise opencode. Closes the
+  "claude was being fed opencode flags" gap that surfaced when cloning the
+  repo to a machine whose only AI CLI is Claude. (PR: `3b2e288`)
+
+### Fixed
+
+- **Implement / ready endpoints no longer touch the user's main checkout.**
+  Replaced the buggy `git checkout -b` + `git checkout <default>` dance in
+  the implementation setup with `git worktree add -b` (one command, pure
+  metadata) and replaced the ready/close flow's `git checkout <default> &&
+  git cherry-pick` with `git update-ref refs/heads/<default> <sha>`
+  (plumbing-only, never touches the working tree). Users with uncommitted
+  local changes in their main checkout no longer get
+  "your local changes would be overwritten" errors when starting a ticket
+  or closing one. (PR: `324a846`)
+
+### Test coverage added
+
+- `tests/coder.test.js` — 4 new claude backend tests (buildArgs flags pinned
+  to `--output-format`/`--verbose`, formatProgress, parseOutput,
+  parseOutput fallback) + 4 auto-detection tests.
+- `tests/git-workflow.test.js` (new file) — 3 integration tests that spin
+  up a real temp git repo, simulate uncommitted user changes, and assert the
+  user's working tree files are byte-identical before and after each
+  dashboard git operation.
+
 ## [0.1.0] — 2026-07-01
 
 The first public release. Dogfooded on the jira-dashboard repo itself.
@@ -32,4 +73,5 @@ The first public release. Dogfooded on the jira-dashboard repo itself.
 
 See [`docs/todo.md`](docs/todo.md) for the full roadmap.
 
+[0.2.0]: https://github.com/Cutuy/jira-dashboard/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Cutuy/jira-dashboard/releases/tag/v0.1.0
