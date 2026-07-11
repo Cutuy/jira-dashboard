@@ -84,6 +84,9 @@ try { db.exec(`ALTER TABLE questions ADD COLUMN options TEXT`); } catch {}
 // Migration: add stage column to activity for per-stage resource tracking
 try { db.exec(`ALTER TABLE activity ADD COLUMN stage TEXT`); } catch {}
 
+// Migration: add base_branch for overriding the default base branch per ticket
+try { db.exec(`ALTER TABLE tickets ADD COLUMN base_branch TEXT`); } catch {}
+
 // Migration: add estimated_complexity and notes columns to tickets
 try { db.exec(`ALTER TABLE tickets ADD COLUMN estimated_complexity TEXT`); } catch {}
 try { db.exec(`ALTER TABLE tickets ADD COLUMN plan_notes TEXT`); } catch {}
@@ -270,6 +273,7 @@ function createTicket(data) {
     coder_pgid: null,
     pr_rework_needed: 0,
     pr_touched_checks: null,
+    base_branch: null,
   };
   const t = { ...defaults, ...data };
   stmts.insertTicket.run(t);

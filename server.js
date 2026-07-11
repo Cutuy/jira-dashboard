@@ -1,5 +1,5 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -17,6 +17,13 @@ const { runGit, execAsync, resolveDiffBase, popStashAndStage, assertWorktreeClea
 const { runTicketTests, buildTestContextForPrompt } = require('./test-runner');
 const { startPrChecker } = require('./pr-checker');
 const { runMachineChecks } = require('./machine-checks');
+const {
+  BugbotActionStore,
+  renderConfirmationPage: renderBugbotConfirmationPage,
+  reviewBodyWithTicketLink: bugbotReviewBodyWithTicketLink,
+  ticketFromAction: ticketFromBugbotAction,
+  ticketIdForAction: ticketIdForBugbotAction,
+} = require('./bugbot-actions');
 let _recheckTicket = null;
 let _startWatchingPr = null;
 let _runClarify = null;
@@ -26,6 +33,44 @@ const { PREPUSH_RUN_PREFIX, TEST_RUN_PREFIX, STAGE_LABELS, uid, slugFromTitle, t
 
 const PORT = config.port;
 const DATA_DIR = config.dataDir;
+const bugbotActions = new BugbotActionStore(DATA_DIR);
+
+function bugbotDashboardUrl() {
+  return process.env.BUGBOT_DASHBOARD_URL
+    || `http://127.0.0.1:${PORT}`;
+}
+
+function updateBugbotSourceReview(record, ticket) {
+  const { action } = record;
+  if (!action.review_id) return false;
+  const endpoint = `repos/${action.repository}/pulls/${action.pr}/reviews/${action.review_id}`;
+  const review = JSON.parse(execFileSync('gh', [
+    'api', '--hostname', 'gitent.corp.nuro.team', endpoint,
+  ], { encoding: 'utf8', timeout: 15_000 }));
+  const ticketUrl = `${bugbotDashboardUrl()}/#ticket/${encodeURIComponent(ticket.id)}`;
+  const updated = bugbotReviewBodyWithTicketLink(review.body, record.id, ticketUrl);
+  if (!updated.updated) {
+    if (String(review.body || '').includes(ticketUrl)) return false;
+    throw new Error('Source review no longer contains this Bugbot action link');
+  }
+  execFileSync('gh', [
+    'api', '--hostname', 'gitent.corp.nuro.team', '--method', 'PUT', endpoint, '--input', '-',
+  ], {
+    encoding: 'utf8',
+    input: JSON.stringify({ body: updated.body }),
+    timeout: 15_000,
+  });
+  return true;
+}
+
+function bugbotPrHeadRef(record) {
+  if (record.action.head_ref) return record.action.head_ref;
+  const endpoint = `repos/${record.action.repository}/pulls/${record.action.pr}`;
+  const pull = JSON.parse(execFileSync('gh', [
+    'api', '--hostname', 'gitent.corp.nuro.team', endpoint,
+  ], { encoding: 'utf8', timeout: 15_000 }));
+  return pull.head?.ref || '';
+}
 
 // ── Rebase conflict clarification ──────────────────────────
 // When the LLM can't auto-resolve a rebase conflict, generate
@@ -130,8 +175,9 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
     const t = db.getTicket(ticketId);
     let prUrl = t?.pr_url || null;
     if (!prUrl) {
+      const baseFlag = t?.base_branch ? ` --base "${escShell(t.base_branch)}"` : '';
       try {
-        prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""`, worktreePath, cmdTimeout, register);
+        prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`, worktreePath, cmdTimeout, register);
         db.logActivity(ticketId, 'pr_created', prUrl);
       } catch {
         const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout, register);
@@ -207,6 +253,58 @@ async function finishImplement(ticketId, worktreePath, runTokens, onProgress) {
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public-spa')));
+
+app.post('/api/bugbot/actions', (req, res) => {
+  try {
+    const record = bugbotActions.create(req.body);
+    const publicUrl = bugbotDashboardUrl();
+    res.status(201).json({ id: record.id, url: `${publicUrl}/bugbot/fix/${record.id}` });
+  } catch (error) {
+    res.status(400).json({ error: `Invalid Bugbot review action: ${error.message}` });
+  }
+});
+
+// GET is read-only so link previews cannot create work accidentally.
+app.get('/bugbot/fix/:id', (req, res) => {
+  try {
+    const record = bugbotActions.get(req.params.id);
+    const existing = db.getTicket(record.ticket_id || ticketIdForBugbotAction(record));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'");
+    res.type('html').send(renderBugbotConfirmationPage(record, existing));
+  } catch (error) {
+    res.status(400).type('text').send(`Invalid Bugbot fix link: ${error.message}`);
+  }
+});
+
+app.post('/api/bugbot/fix/:id', express.urlencoded({ extended: false, limit: '64kb' }), (req, res) => {
+  try {
+    const record = bugbotActions.get(req.params.id);
+    const ticketId = ticketIdForBugbotAction(record);
+    let ticket = db.getTicket(ticketId);
+    if (!ticket) {
+      const selected = Array.isArray(req.body.selected)
+        ? req.body.selected
+        : [req.body.selected].filter(Boolean);
+      const notes = Object.fromEntries(Object.entries(req.body)
+        .filter(([key]) => key.startsWith('note_'))
+        .map(([key, value]) => [key.slice(5), value]));
+      const baseBranch = bugbotPrHeadRef(record);
+      ticket = db.createTicket(ticketFromBugbotAction(
+        record, selected, notes, new Date(), baseBranch,
+      ));
+      bugbotActions.setTicket(record.id, ticket.id);
+    }
+    try {
+      updateBugbotSourceReview(record, ticket);
+    } catch (error) {
+      console.error(`Failed to update Bugbot review ${record.action.review_id}: ${error.message}`);
+    }
+    res.redirect(303, `/#ticket/${encodeURIComponent(ticket.id)}`);
+  } catch (error) {
+    res.status(400).json({ error: `Invalid Bugbot fix link: ${error.message}` });
+  }
+});
 
 // SPA fallback
 app.get(/^(?!\/api\/).*/, (req, res) => {
@@ -321,11 +419,15 @@ app.get('/api/tickets/:id/stream', (req, res) => {
 
 // ── Create ticket ─────────────────────────────────────────
 app.post('/api/tickets', (req, res) => {
-  const { title, content } = req.body;
+  const { title, content, base_branch } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
   const id = ticketId(title);
   const now = new Date().toISOString();
-  const ticket = db.createTicket({ id, title: title.trim(), content: (content || '').trim(), created_at: now, updated_at: now });
+  const ticket = db.createTicket({
+    id, title: title.trim(), content: (content || '').trim(),
+    created_at: now, updated_at: now,
+    ...(base_branch && { base_branch: base_branch.trim() }),
+  });
   res.status(201).json(ticket);
 });
 
@@ -703,15 +805,34 @@ app.post('/api/tickets/:id/pr-tasks', async (req, res) => {
     let resolvedComments = [];
     let fileContent = null;
     try { fileContent = fs.readFileSync(outPath, 'utf-8'); } catch {}
-    if (fileContent) {
-      try {
-        const parsed = JSON.parse(fileContent);
-        if (Array.isArray(parsed.rework_checks)) reworkList = parsed.rework_checks.filter(Boolean);
-        if (Array.isArray(parsed.touched_checks)) touchedList = parsed.touched_checks.filter(c => c && c.name);
-        if (Array.isArray(parsed.resolved_comments)) resolvedComments = parsed.resolved_comments.filter(c => c && c.comment_id);
-      } catch {}
+
+    if (!fileContent) {
+      const snippet = (result?.text || '(no coder output)').slice(0, 2000);
+      db.logActivity(ticket.id, 'pr_tasks_output_missing',
+        `Coder did not write ${path.basename(outPath)}. Coder output: ${snippet}`);
+      db.updateTicketField(ticket.id, 'status', 'idle');
+      return res.status(500).json({ error: 'Coder did not produce output file' });
     }
-    try { fs.unlinkSync(outPath); } catch {}
+
+    let parseError = null;
+    try {
+      const parsed = JSON.parse(fileContent);
+      if (Array.isArray(parsed.rework_checks)) reworkList = parsed.rework_checks.filter(Boolean);
+      if (Array.isArray(parsed.touched_checks)) touchedList = parsed.touched_checks.filter(c => c && c.name);
+      if (Array.isArray(parsed.resolved_comments)) resolvedComments = parsed.resolved_comments.filter(c => c && c.comment_id);
+    } catch (e) {
+      parseError = e.message;
+    }
+
+    if (parseError) {
+      const snippet = fileContent.slice(0, 2000);
+      db.logActivity(ticket.id, 'pr_tasks_output_invalid',
+        `Invalid JSON in ${path.basename(outPath)}: ${parseError}. Content: ${snippet}`);
+      db.updateTicketField(ticket.id, 'status', 'idle');
+      return res.status(500).json({ error: `Invalid output: ${parseError}` });
+    }
+
+    // Keep the output file on disk for debugging
 
     // If review comments were resolved without rework, ensure the check is reflected as touched
     if (resolvedComments.length > 0 && !touchedList.some(c => c.name === 'PR Review OPEN Comments')) {
@@ -920,9 +1041,10 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
     return res.status(400).json({ error: 'No worktree available for rebase' });
   }
 
-  db.logActivity(ticket.id, 'rebase_start', `Rebasing onto ${config.branchDefault}`);
+  const rebaseBranch = ticket.base_branch || config.branchDefault;
+  db.logActivity(ticket.id, 'rebase_start', `Rebasing onto ${rebaseBranch}`);
   db.updateTicketField(ticket.id, 'status', 'running');
-  sseBroadcast(ticket.id, 'stdout', { text: `Rebasing onto ${config.branchDefault}…` });
+  sseBroadcast(ticket.id, 'stdout', { text: `Rebasing onto ${rebaseBranch}…` });
 
   try {
     // Abort any stale in-progress rebase
@@ -943,7 +1065,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
     // default-branch ref drifts behind origin; freshDefaultBase fetches and
     // resolves origin/<default> (falling back to the local ref when there's no
     // remote). This mirrors how new worktrees are based off the fresh tip.
-    const rebaseBase = worktrees.freshDefaultBase(ticket.worktree_path);
+    const rebaseBase = worktrees.freshDefaultBase(ticket.worktree_path, ticket.base_branch);
 
     // Attempt the rebase
     try {
@@ -1046,7 +1168,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
         db.logActivity(ticket.id, 'rebase_coder_unresolved', `Coder could not resolve conflicts in ${conflictFiles.length} files`);
         await generateConflictClarification(ticket, conflictFiles, gitStatus, resolveOutput);
 
-        const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts in:\n${
+        const feedbackText = `The rebase onto ${ticket.base_branch || config.branchDefault} failed with conflicts in:\n${
           conflictFiles.join('\n') || '(unknown files)'
         }\n\nThe rebase conflict resolver could not resolve these automatically. Please answer the clarification questions to guide resolution.`;
         db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null, status: 'idle' });
@@ -1065,7 +1187,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
         db.logActivity(ticket.id, 'rebase_coder_error', coderErr.message.slice(0, 200));
         await generateConflictClarification(ticket, conflictFiles, gitStatus, null);
 
-        const feedbackText = `The rebase onto ${config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease answer the clarification questions to guide resolution.`;
+        const feedbackText = `The rebase onto ${ticket.base_branch || config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease answer the clarification questions to guide resolution.`;
         db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null, status: 'idle' });
 
         return res.json({
@@ -1107,19 +1229,20 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     let hasChanges = false;
     try { runGit(`diff --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
     try { runGit(`diff --cached --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
+    const readyBaseBranch = ticket.base_branch || config.branchDefault;
     // PR strategy only commits new worktree changes — pre-existing branch
     // commits (from a prior run) are already on the branch and don't need
     // a new commit.  Non-PR strategies need the branch-ahead check so the
     // subsequent rebase/cherry-pick has something to apply.
     if (!hasChanges && config.mergeStrategy !== 'pr') {
       try {
-        const ahead = parseInt(runGit(`rev-list --count origin/${config.branchDefault}..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
+        const ahead = parseInt(runGit(`rev-list --count origin/${readyBaseBranch}..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
         if (ahead > 0) hasChanges = true;
       } catch {}
     }
 
     if (!hasChanges && config.mergeStrategy !== 'pr') {
-      const msg = `No uncommitted changes and no commits ahead of ${config.branchDefault} on this branch.`;
+      const msg = `No uncommitted changes and no commits ahead of ${readyBaseBranch} on this branch.`;
       db.logActivity(ticket.id, 'no_changes', msg);
       return res.status(409).json({ error: msg, ticket: db.getTicket(ticket.id) });
     }
@@ -1167,7 +1290,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
       return res.json({ success: true, pending: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
     } else {
       try {
-        runGit(`rebase ${config.branchDefault}`, ticket.worktree_path);
+        runGit(`rebase ${readyBaseBranch}`, ticket.worktree_path);
         commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
         // Move the default-branch ref to the rebased commit via plumbing.
         // `git update-ref` is a metadata operation: it rewrites the branch
@@ -1176,7 +1299,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
         // local changes. If those changes ever need to be reconciled with
         // the new branch state, that's a regular git reset/merge the user
         // can do in their own time.
-        runGit(`update-ref refs/heads/${config.branchDefault} ${commitSha}`);
+        runGit(`update-ref refs/heads/${readyBaseBranch} ${commitSha}`);
       } catch (err) {
         db.logActivity(ticket.id, 'rebase_failed', err.message);
         try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
@@ -1197,7 +1320,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
           ? `\nGit error: ${errorDetail}`
           : '';
         return res.status(409).json({
-          error: `Rebase failed against ${config.branchDefault}.${fileList}${gitHint}\nResolve in worktree ${ticket.worktree_path}, then retry.`,
+          error: `Rebase failed against ${readyBaseBranch}.${fileList}${gitHint}\nResolve in worktree ${ticket.worktree_path}, then retry.`,
           ticket: db.getTicket(ticket.id)
         });
       }
@@ -1577,7 +1700,7 @@ app.listen(PORT, '0.0.0.0', () => {
   if (suggestions.length < SUGGESTIONS_MAX) generateSuggestions();
 
   // Periodic PR checker — scans pr_opened tickets for new failures/reviews
-  _runClarify = (tid) => { try { runClarify(tid); } catch {} };
+  _runClarify = (tid) => { try { return runClarify(tid); } catch {} };
   const prChecker = startPrChecker(db, config, sseBroadcast, _runClarify);
   _recheckTicket = prChecker.recheckTicket;
   _startWatchingPr = prChecker.startWatching;

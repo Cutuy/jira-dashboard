@@ -88,14 +88,24 @@ async function acquirePoolSlot(ticket, branchName) {
   for (const wt of pool.poolPaths(config.worktreesDir, config.numWorktrees)) {
     if (claimed.has(path.resolve(wt))) continue;   // held by another ticket
     if (!pool.isValidWorktree(wt)) continue;        // not provisioned — skip
+
+    // Claim the slot in the DB *before* the async git operations, so a
+    // concurrent acquire() call sees this write immediately (better-sqlite3
+    // is synchronous) and skips the slot.  Without this early claim a second
+    // call racing on the same DB snapshot would both see the slot as free.
+    db.updateTicketField(ticket.id, 'worktree_path', wt);
+
     let baseSha;
+    const branchDefault = ticket.base_branch || config.branchDefault;
     try {
-      ({ baseSha } = await pool.acquireSlot({ worktreePath: wt, branchDefault: config.branchDefault, branchName }));
+      ({ baseSha } = await pool.acquireSlot({ worktreePath: wt, branchDefault, branchName }));
     } catch (e) {
+      // Rollback the claim on failure so the slot isn't leaked
+      db.updateTicketField(ticket.id, 'worktree_path', null);
       console.log(`[acquirePoolSlot] ${ticket.id} slot ${wt} FAILED: ${e.message}`);
       db.logActivity(ticket.id, 'worktree_acquire_warn',
         `slot ${wt} failed to prep: ${e.message.slice(0, 500)}`);
-      continue; // corrupt slot — try the next one
+      continue;
     }
     return { worktreePath: wt, branchName, baseSha };
   }
@@ -173,7 +183,8 @@ async function acquire(ticket) {
       // metadata operation that writes a new branch ref and worktree dir. Base
       // off the freshly-fetched upstream tip, not the stale local ref, so a new
       // ticket doesn't start weeks behind origin (see pool.freshDefaultBase).
-      const base = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault: config.branchDefault });
+      const ticketBranchDefault = ticket.base_branch || config.branchDefault;
+      const base = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault: ticketBranchDefault });
       git(`worktree add -b ${branchName} ${worktreePath} ${base}`, undefined, WORKTREE_ADD_TIMEOUT);
     }
   }
@@ -188,8 +199,8 @@ async function acquire(ticket) {
 // the configured default branch, so server.js gets the current origin tip
 // (e.g. origin/develop) without reaching into the pool or repeating the
 // fetch/fallback logic. See worktree-pool.freshDefaultBase for the rationale.
-function freshDefaultBase(cwd) {
-  return pool.freshDefaultBase({ cwd, branchDefault: config.branchDefault });
+function freshDefaultBase(cwd, baseBranch) {
+  return pool.freshDefaultBase({ cwd, branchDefault: baseBranch || config.branchDefault });
 }
 
 // Detach a ticket from its worktree when it closes or is deleted. Pooled slots
@@ -202,7 +213,8 @@ async function release(ticketId) {
   const bn = t.branch_name;
 
   if (isPoolMode() && isPoolWorktree(wt)) {
-    await pool.releaseSlot({ worktreePath: wt, branchDefault: config.branchDefault, branchName: bn });
+    const branchDefault = t.base_branch || config.branchDefault;
+    await pool.releaseSlot({ worktreePath: wt, branchDefault, branchName: bn });
     db.updateTicket(ticketId, { worktree_path: null });
     db.logActivity(ticketId, 'worktree_released', wt || '(none)');
     return;
