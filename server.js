@@ -173,19 +173,39 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
     db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
 
     const t = db.getTicket(ticketId);
-    // Always attempt to create a fresh PR for this ticket's branch.
-    // An existing pr_url from a Bugbot action (or a prior lifecycle) points
-    // to a different branch — reusing it would skip PR creation and pull in
-    // stale CI results from the old branch.
-    let prUrl = null;
     const baseFlag = t?.base_branch ? ` --base "${escShell(t.base_branch)}"` : '';
-    try {
-      prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`, worktreePath, cmdTimeout, register);
-      db.logActivity(ticketId, 'pr_created', prUrl);
-    } catch {
-      // PR may already exist for this branch (re-push). Keep existing URL.
-      prUrl = t?.pr_url || null;
-      if (!prUrl) {
+    let prUrl = null;
+
+    if (t?.pr_url) {
+      // Check if the existing PR's head branch matches ours. If it does, we can
+      // re-push to the same PR. If not, we must create a fresh PR to avoid
+      // inheriting stale CI results from a different branch (e.g. a Bugbot PR).
+      const m = t.pr_url.match(/^https?:\/\/([^\/]+)\/.+\/pull\/(\d+)/);
+      if (m) {
+        const host = m[1];
+        const prNum = m[2];
+        try {
+          const headRef = await execAsync(
+            `gh pr view ${prNum} --hostname ${host} --json headRefName --jq .headRefName`,
+            worktreePath, cmdTimeout, register
+          );
+          if (headRef.trim() === branchName) {
+            prUrl = t.pr_url; // same branch — reuse
+          }
+        } catch {}
+      }
+    }
+
+    if (!prUrl) {
+      try {
+        prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`,
+          worktreePath, cmdTimeout, register);
+        db.logActivity(ticketId, 'pr_created', prUrl);
+        // Fresh PR — clear stale PR state inherited from prior lifecycle
+        db.updateTicketField(ticketId, 'pr_rework_needed', 0);
+        db.updateTicketField(ticketId, 'pr_touched_checks', null);
+        db.updateTicketField(ticketId, 'review_feedback', null);
+      } catch {
         const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout, register);
         const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
         prUrl = `https://github.com/${repoPath}/pull/new/${branchName}`;
