@@ -5,6 +5,7 @@ import { ConsoleOutput } from './components/console-output'
 import { ResourceUsageSection } from './components/resource-usage-section'
 import { ImplementationPlanSection } from './components/implementation-plan-section'
 import { UnitTestsSection } from './components/unit-tests-section'
+import { LiveStatusSection } from './components/live-status-section'
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
@@ -1521,14 +1522,13 @@ export default function App() {
 
                 {/* Clarification — running (generating questions / processing answers) */}
                 {sel.stage === 'clarification' && sel.status === 'running' && (
-                  <Section title="Live status">
-                    <div className="flex items-center gap-2 t-body text-ink-2 mb-3">
-                      <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                      {sel.questions.length > 0 ? 'Processing answers…' : 'Generating questions…'}
-                    </div>
-                    <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
-                    <ConsoleOutput lines={stdoutLines} />
-                  </Section>
+                  <LiveStatusSection
+                    activity={sel.activity || []}
+                    stageResources={sel.stage_resources}
+                    status={sel.status}
+                    stdoutLines={stdoutLines}
+                    statusText={sel.questions.length > 0 ? 'Processing answers…' : 'Generating questions…'}
+                  />
                 )}
 
                 {/* Clarification — Q&A rounds */}
@@ -1568,15 +1568,13 @@ export default function App() {
                       planNotes={sel.plan_notes}
                     />
                     {sel.status === 'running' ? (
-                      <Section title="Live status">
-                        <div className="flex items-center gap-2 t-body text-ink-2">
-                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          Implementing…
-                        </div>
-                        <div className="mt-3 rounded-lg ring-1 ring-border p-3">
-                          <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
-                        </div>
-                        <ConsoleOutput lines={stdoutLines} />
+                      <LiveStatusSection
+                        activity={sel.activity || []}
+                        stageResources={sel.stage_resources}
+                        status={sel.status}
+                        stdoutLines={stdoutLines}
+                        statusText="Implementing…"
+                      >
                         {todoItems.length > 0 && (
                           <div className="mt-3">
                             <p className="t-meta font-medium text-ink-2 uppercase tracking-wider mb-1.5">
@@ -1612,7 +1610,7 @@ export default function App() {
                             </div>
                           )
                         })()}
-                      </Section>
+                      </LiveStatusSection>
                     ) : (
                       <div className="rounded-lg border border-dashed border-border p-6 text-center">
                         <p className="t-body text-ink-2">Ready to implement.</p>
@@ -1625,18 +1623,15 @@ export default function App() {
                 {sel.stage === 'review' && (
                   <>
                     {sel.status === 'running' && (
-                      <Section title="Live status">
-                        <div className="flex items-center gap-2 t-body text-ink-2 mb-3">
-                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          {['pushing', 'branch_pushed'].includes((sel.activity || [])[0]?.action ?? '')
-                            ? 'Pushing branch and opening PR…'
-                            : 'Resolving rebase conflicts…'}
-                        </div>
-                        <div className="mt-3 rounded-lg ring-1 ring-border p-3">
-                          <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
-                        </div>
-                        <ConsoleOutput lines={stdoutLines} />
-                      </Section>
+                      <LiveStatusSection
+                        activity={sel.activity || []}
+                        stageResources={sel.stage_resources}
+                        status={sel.status}
+                        stdoutLines={stdoutLines}
+                        statusText={['pushing', 'branch_pushed'].includes((sel.activity || [])[0]?.action ?? '')
+                          ? 'Pushing branch and opening PR…'
+                          : 'Resolving rebase conflicts…'}
+                      />
                     )}
                     {diff && (
                       <Section
