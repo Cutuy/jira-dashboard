@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { timeAgo } from './lib/utils'
 import { PrBanner } from './components/pr-banner'
 import { ConsoleOutput } from './components/console-output'
+import { ResourceUsageSection } from './components/resource-usage-section'
+import { ImplementationPlanSection } from './components/implementation-plan-section'
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
@@ -526,7 +528,7 @@ function TestReportPanel({
   )
 }
 
-function ResourceMetrics({
+export function ResourceMetrics({
   activity, stageResources, status,
 }: {
   activity: A[]; stageResources?: SR; status?: string
@@ -1559,23 +1561,11 @@ export default function App() {
                 {/* Implementation — plan + live status */}
                 {sel.stage === 'implementation' && (
                   <>
-                    {sel.plan && (
-                      <Section
-                        title="Implementation Plan"
-                        hint={
-                          sel.estimated_complexity
-                            ? `complexity: ${sel.estimated_complexity}`
-                            : undefined
-                        }
-                      >
-                        <pre className="rounded-md bg-zinc-900 text-zinc-100 p-3.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
-{sel.plan}
-                        </pre>
-                        {sel.plan_notes && (
-                          <p className="t-small text-ink-3 mt-2 italic">{sel.plan_notes}</p>
-                        )}
-                      </Section>
-                    )}
+                    <ImplementationPlanSection
+                      plan={sel.plan}
+                      estimatedComplexity={sel.estimated_complexity}
+                      planNotes={sel.plan_notes}
+                    />
                     {sel.status === 'running' ? (
                       <Section title="Live status">
                         <div className="flex items-center gap-2 t-body text-ink-2">
@@ -1720,11 +1710,7 @@ export default function App() {
                       </Section>
                     )}
                     {sel.worktree_path && (
-                      <Section title="Resource usage">
-                        <div className="rounded-md ring-1 ring-border p-3">
-                          <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
-                        </div>
-                      </Section>
+                      <ResourceUsageSection activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                     )}
                   </>
                 )}
@@ -1755,23 +1741,11 @@ export default function App() {
                         </div>
                       </div>
                     )}
-                    {sel.plan && (
-                      <Section
-                        title="Implementation Plan"
-                        hint={
-                          sel.estimated_complexity
-                            ? `complexity: ${sel.estimated_complexity}`
-                            : undefined
-                        }
-                      >
-                        <pre className="rounded-md bg-zinc-900 text-zinc-100 p-3.5 t-mono-12 leading-relaxed whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
-{sel.plan}
-                        </pre>
-                        {sel.plan_notes && (
-                          <p className="t-small text-ink-3 mt-2 italic">{sel.plan_notes}</p>
-                        )}
-                      </Section>
-                    )}
+                    <ImplementationPlanSection
+                      plan={sel.plan}
+                      estimatedComplexity={sel.estimated_complexity}
+                      planNotes={sel.plan_notes}
+                    />
                     {sel.latest_test && (
                       <Section
                         title="Unit tests"
@@ -1787,11 +1761,7 @@ export default function App() {
                         />
                       </Section>
                     )}
-                    <Section title="Resource usage">
-                      <div className="rounded-md ring-1 ring-border p-3">
-                        <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
-                      </div>
-                    </Section>
+                    <ResourceUsageSection activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                     {sel.questions.length > 0 && (
                       <Section title="Q&A history">
                         <div className="space-y-3">
@@ -2000,7 +1970,7 @@ function DialogFooter({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Section({
+export function Section({
   title, hint, children,
 }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
