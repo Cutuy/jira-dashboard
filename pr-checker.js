@@ -29,13 +29,6 @@ function startPrChecker(db, config, sseBroadcast, runClarify) {
     const t = db.getTicket(tid);
     if (!t || t.stage !== 'pr_opened' || !t.pr_url) return;
 
-    // Grace period: skip checks for the first 2 minutes after transition to
-    // pr_opened, giving GitHub time to sync CI results for a fresh push/PR.
-    if (t.updated_at) {
-      const elapsed = Date.now() - new Date(t.updated_at).getTime();
-      if (elapsed < 120_000) return;
-    }
-
     const m = t.pr_url.match(/\/pull\/(\d+)/);
     if (!m) return;
     const prNum = m[1];
