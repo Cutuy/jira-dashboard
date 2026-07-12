@@ -363,14 +363,13 @@ async function getTicketResponse(id) {
   const latestTest = db.getLatestTestRun(id);
   const behindCount = getBranchStaleness(t.worktree_path, t.base_branch);
   let pr_state = null;
-  if (t.stage === 'pr_opened' || t.stage === 'done') {
-    // Resolve PR URL: prefer ticket row, fall back to activity log
-    let prUrl = t.pr_url;
-    if (!prUrl) {
-      const entry = (t.activity || []).find(a => a.action === 'pr_created' || a.action === 'pr_link');
-      if (entry) prUrl = entry.detail;
-    }
-    if (prUrl) {
+  // Resolve PR URL: prefer ticket row, fall back to activity log for pr_opened/done
+  let prUrl = t.pr_url;
+  if (!prUrl && (t.stage === 'pr_opened' || t.stage === 'done')) {
+    const entry = (t.activity || []).find(a => a.action === 'pr_created' || a.action === 'pr_link');
+    if (entry) prUrl = entry.detail;
+  }
+  if (prUrl) {
       const m = prUrl.match(/\/pull\/(\d+)/);
       if (m) {
         try {
