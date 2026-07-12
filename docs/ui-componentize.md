@@ -10,7 +10,7 @@
 
 | # | Candidate | Lines | Appears in | Props | Status |
 |---|-----------|-------|------------|-------|--------|
-| 1 | `ConsoleOutput` / `StdoutConsole` | ~4 x4 | clarification, implementation, review, pr_opened | `lines: string[]` | [ ] |
+| 1 | [`ConsoleOutput`](../client/src/components/console-output.tsx) | ~4 x4 | clarification, implementation, review, pr_opened | `lines: string[]` | [x] |
 | 2 | `LiveStatusSection` | ~40 x3 | clarification, implementation, review | `statusText`, `activity`, `stageResources`, `status`, `stdoutLines`, `children` | [ ] |
 | 3 | `ImplementationPlanSection` | ~17 x2 | implementation, done/pr_opened | `plan`, `estimatedComplexity`, `planNotes` | [ ] |
 | 4 | `UnitTestsSection` | ~17 x2 | review, done/pr_opened | `test`, `onRerun`, `rerunning`, `autoExpandFail` | [ ] |
