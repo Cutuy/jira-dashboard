@@ -1505,6 +1505,50 @@ export default function App() {
                   </Section>
                 )}
 
+                {/* PR link banner — shown whenever a PR URL exists, regardless of stage */}
+                {cfg.mergeStrategy === 'pr' && resolvePrUrl(sel) ? (
+                  <div className={`rounded-lg border p-3.5 flex items-start gap-2.5 ${
+                    sel.pr_state === 'merged' ? 'border-violet-200 bg-violet-50' :
+                    sel.pr_state === 'closed' ? 'border-red-200 bg-red-50' :
+                    'border-emerald-200 bg-emerald-50'
+                  }`}>
+                    <GitPullRequest className={`h-4 w-4 mt-0.5 shrink-0 ${
+                      sel.pr_state === 'merged' ? 'text-violet-600' :
+                      sel.pr_state === 'closed' ? 'text-red-600' :
+                      'text-emerald-600'
+                    }`} />
+                    <div className={`t-body ${
+                      sel.pr_state === 'merged' ? 'text-violet-900' :
+                      sel.pr_state === 'closed' ? 'text-red-900' :
+                      'text-emerald-900'
+                    }`}>
+                      {sel.pr_state === 'merged' ? 'PR merged' : sel.pr_state === 'closed' ? 'PR closed' : 'PR opened'}
+                      {' · '}
+                      <a
+                        href={resolvePrUrl(sel)!}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`font-medium underline underline-offset-2 inline-flex items-center gap-1 ${
+                          sel.pr_state === 'merged' ? 'text-violet-700 hover:text-violet-600' :
+                          sel.pr_state === 'closed' ? 'text-red-700 hover:text-red-600' :
+                          'text-emerald-700 hover:text-emerald-600'
+                        }`}
+                      >
+                        {prNumberFromUrl(resolvePrUrl(sel)) != null
+                          ? `#${prNumberFromUrl(resolvePrUrl(sel))}`
+                          : 'View PR'}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      {' · Commit '}
+                      <code className={`t-mono-12 ${
+                        sel.pr_state === 'merged' ? 'text-violet-800' :
+                        sel.pr_state === 'closed' ? 'text-red-800' :
+                        'text-emerald-800'
+                      }`}>{sel.commit_sha}</code>
+                    </div>
+                  </div>
+                ) : null}
+
                 {/* Clarification — running (generating questions / processing answers) */}
                 {sel.stage === 'clarification' && sel.status === 'running' && (
                   <Section title="Live status">
@@ -1744,57 +1788,18 @@ export default function App() {
                   </Section>
                 )}
 
-                {/* PR link banner — shown whenever a PR URL exists, regardless of stage */}
-                {cfg.mergeStrategy === 'pr' && resolvePrUrl(sel) ? (
-                  <div className={`rounded-lg border p-3.5 flex items-start gap-2.5 ${
-                    sel.pr_state === 'merged' ? 'border-violet-200 bg-violet-50' :
-                    sel.pr_state === 'closed' ? 'border-red-200 bg-red-50' :
-                    'border-emerald-200 bg-emerald-50'
-                  }`}>
-                    <GitPullRequest className={`h-4 w-4 mt-0.5 shrink-0 ${
-                      sel.pr_state === 'merged' ? 'text-violet-600' :
-                      sel.pr_state === 'closed' ? 'text-red-600' :
-                      'text-emerald-600'
-                    }`} />
-                    <div className={`t-body ${
-                      sel.pr_state === 'merged' ? 'text-violet-900' :
-                      sel.pr_state === 'closed' ? 'text-red-900' :
-                      'text-emerald-900'
-                    }`}>
-                      {sel.pr_state === 'merged' ? 'PR merged' : sel.pr_state === 'closed' ? 'PR closed' : 'PR opened'}
-                      {' · '}
-                      <a
-                        href={resolvePrUrl(sel)!}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={`font-medium underline underline-offset-2 inline-flex items-center gap-1 ${
-                          sel.pr_state === 'merged' ? 'text-violet-700 hover:text-violet-600' :
-                          sel.pr_state === 'closed' ? 'text-red-700 hover:text-red-600' :
-                          'text-emerald-700 hover:text-emerald-600'
-                        }`}
-                      >
-                        {prNumberFromUrl(resolvePrUrl(sel)) != null
-                          ? `#${prNumberFromUrl(resolvePrUrl(sel))}`
-                          : 'View PR'}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                      {' · Commit '}
-                      <code className={`t-mono-12 ${
-                        sel.pr_state === 'merged' ? 'text-violet-800' :
-                        sel.pr_state === 'closed' ? 'text-red-800' :
-                        'text-emerald-800'
-                      }`}>{sel.commit_sha}</code>
-                    </div>
-                  </div>
-                ) : (sel.stage === 'done' || sel.stage === 'pr_opened') && sel.commit_sha ? (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3.5 flex items-start gap-2.5">
-                    <Check className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
-                    <div className="t-body text-emerald-900">
-                      Merged into main · Commit{' '}
-                      <code className="t-mono-12 text-emerald-800">{sel.commit_sha}</code>
-                    </div>
-                  </div>
-                ) : null}
+                {/* Done / PR Opened — final review state */}
+                {(sel.stage === 'done' || sel.stage === 'pr_opened') && (
+                  <>
+                    {cfg.mergeStrategy !== 'pr' && sel.commit_sha && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3.5 flex items-start gap-2.5">
+                        <Check className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                        <div className="t-body text-emerald-900">
+                          Merged into main · Commit{' '}
+                          <code className="t-mono-12 text-emerald-800">{sel.commit_sha}</code>
+                        </div>
+                      </div>
+                    )}
                     {sel.plan && (
                       <Section
                         title="Implementation Plan"
@@ -1852,37 +1857,7 @@ export default function App() {
                         </div>
                       </Section>
                     )}
-
-                {cfg.mergeStrategy === 'pr' && resolvePrUrl(sel) && (
-                  <div className={`rounded-lg border p-3.5 flex items-start gap-2.5 ${
-                    sel.pr_state === 'merged' ? 'border-violet-200 bg-violet-50' :
-                    sel.pr_state === 'closed' ? 'border-red-200 bg-red-50' :
-                    'border-border bg-surface-3'
-                  }`}>
-                    <GitPullRequest className={`h-4 w-4 mt-0.5 shrink-0 ${
-                      sel.pr_state === 'merged' ? 'text-violet-600' :
-                      sel.pr_state === 'closed' ? 'text-red-600' :
-                      'text-ink-3'
-                    }`} />
-                    <div className={`t-body ${
-                      sel.pr_state === 'merged' ? 'text-violet-900' :
-                      sel.pr_state === 'closed' ? 'text-red-900' :
-                      'text-ink-2'
-                    }`}>
-                      {sel.pr_state === 'merged' ? 'PR merged' : sel.pr_state === 'closed' ? 'PR closed' : 'PR'}{' · '}
-                      <a
-                        href={resolvePrUrl(sel)!}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-medium underline underline-offset-2 inline-flex items-center gap-1"
-                      >
-                        {prNumberFromUrl(resolvePrUrl(sel)) != null
-                          ? `#${prNumberFromUrl(resolvePrUrl(sel))}`
-                          : 'View PR'}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </div>
-                  </div>
+                  </>
                 )}
 
                 {/* PR tasks touched checks */}
