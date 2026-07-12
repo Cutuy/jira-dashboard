@@ -11,7 +11,7 @@
 | # | Candidate | Lines | Appears in | Props | Status |
 |---|-----------|-------|------------|-------|--------|
 | 1 | [`ConsoleOutput`](../client/src/components/console-output.tsx) | ~4 x4 | clarification, implementation, review, pr_opened | `lines: string[]` | [x] |
-| 2 | `LiveStatusSection` | ~40 x3 | clarification, implementation, review | `statusText`, `activity`, `stageResources`, `status`, `stdoutLines`, `children` | [ ] |
+| 2 | [`LiveStatusSection`](../client/src/components/live-status-section.tsx) | ~40 x3 | clarification, implementation, review | `statusText`, `activity`, `stageResources`, `status`, `stdoutLines`, `children` | [x] |
 | 3 | [`ImplementationPlanSection`](../client/src/components/implementation-plan-section.tsx) | ~17 x2 | implementation, done/pr_opened | `plan`, `estimatedComplexity`, `planNotes` | [x] |
 | 4 | [`UnitTestsSection`](../client/src/components/unit-tests-section.tsx) | ~17 x2 | review, done/pr_opened | `test`, `onRerun`, `rerunning`, `autoExpandFail` | [x] |
 | 5 | [`ResourceUsageSection`](../client/src/components/resource-usage-section.tsx) | ~7 x2 | review, done/pr_opened | `activity`, `stageResources`, `status` | [x] |
