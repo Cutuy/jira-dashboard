@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { timeAgo } from './lib/utils'
 import { PrBanner } from './components/pr-banner'
+import { ConsoleOutput } from './components/console-output'
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
@@ -1523,11 +1524,7 @@ export default function App() {
                       {sel.questions.length > 0 ? 'Processing answers…' : 'Generating questions…'}
                     </div>
                     <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
-                    {stdoutLines.length > 0 && (
-                      <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
-                        {stdoutLines.join('')}
-                      </div>
-                    )}
+                    <ConsoleOutput lines={stdoutLines} />
                   </Section>
                 )}
 
@@ -1588,11 +1585,7 @@ export default function App() {
                         <div className="mt-3 rounded-lg ring-1 ring-border p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                         </div>
-                        {stdoutLines.length > 0 && (
-                          <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
-                            {stdoutLines.join('')}
-                          </div>
-                        )}
+                        <ConsoleOutput lines={stdoutLines} />
                         {todoItems.length > 0 && (
                           <div className="mt-3">
                             <p className="t-meta font-medium text-ink-2 uppercase tracking-wider mb-1.5">
@@ -1651,11 +1644,7 @@ export default function App() {
                         <div className="mt-3 rounded-lg ring-1 ring-border p-3">
                           <ResourceMetrics activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                         </div>
-                        {stdoutLines.length > 0 && (
-                          <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
-                            {stdoutLines.join('')}
-                          </div>
-                        )}
+                        <ConsoleOutput lines={stdoutLines} />
                       </Section>
                     )}
                     {diff && (
@@ -1842,11 +1831,7 @@ export default function App() {
                 )}
 
                 {/* PR tasks console output */}
-                {sel.stage === 'pr_opened' && stdoutLines.length > 0 && (
-                  <div className="mt-3 rounded-md ring-1 ring-border bg-zinc-950 text-ink-3 p-3 max-h-64 overflow-y-auto t-mono-12 leading-relaxed whitespace-pre-wrap break-words">
-                    {stdoutLines.join('')}
-                  </div>
-                )}
+                {sel.stage === 'pr_opened' && <ConsoleOutput lines={stdoutLines} />}
 
               </div>
 
