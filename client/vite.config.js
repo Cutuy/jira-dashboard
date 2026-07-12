@@ -7,5 +7,10 @@ export default defineConfig({
   server: {
     proxy: { '/api': `http://localhost:${process.env.PORT || 3006}` }
   },
-  build: { outDir: '../public-spa' }
+  build: { outDir: '../public-spa' },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: [],
+  },
 })
