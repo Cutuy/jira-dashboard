@@ -194,7 +194,7 @@ function TicketCard({ t, onOpen, loading, highlighted }: { t: T; onOpen: (id: st
           )}
           {implCount > 0 && (
             <span className="t-meta text-ink-2 bg-surface-3 px-1.5 py-0.5 rounded">
-              {implCount} impl{implCount === 1 ? '' : 's'}
+              {implCount} iter{implCount === 1 ? '' : 's'}
             </span>
           )}
         </div>
@@ -944,7 +944,6 @@ export default function App() {
     try {
       const t = await fetchJSON(`/api/suggestions/${sug.id}/accept`, { method: 'POST' })
       setSuggestions(p => p.filter(s => s.id !== sug.id))
-      await fetchJSON(`/api/tickets/${t.id}/clarify`, { method: 'POST' })
       const u = await fetchJSON(`/api/tickets/${t.id}`)
       setSel(u); setTickets(p => [u, ...p])
       lastUpd.current = u.updated_at
@@ -968,7 +967,6 @@ export default function App() {
         body: JSON.stringify({ title, content }),
       })
       setTitle(''); setContent(''); setError('')
-      await fetchJSON(`/api/tickets/${t.id}/clarify`, { method: 'POST' })
       const u: T = await fetchJSON(`/api/tickets/${t.id}`)
       setSel(u); setTickets(p => [u, ...p.filter(x => x.id !== t.id)])
       lastUpd.current = u.updated_at
