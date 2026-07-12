@@ -1441,6 +1441,15 @@ export default function App() {
             <div className="px-4 sm:px-6 py-4 sm:py-5 flex flex-col lg:flex-row gap-4 lg:gap-6">
               {/* Main column */}
               <div className="flex-1 min-w-0 space-y-5">
+                {/* PR link banner at the very top */}
+                {cfg.mergeStrategy === 'pr' && resolvePrUrl(sel) && (
+                  <PrBanner
+                    prUrl={resolvePrUrl(sel)!}
+                    prState={sel.pr_state}
+                    commitSha={sel.commit_sha}
+                  />
+                )}
+
                 {sel.content && (
                   <Section title="Description">
                     <p className="t-body text-ink-2 leading-relaxed whitespace-pre-wrap">
@@ -1504,15 +1513,6 @@ export default function App() {
                       </Btn>
                     </div>
                   </Section>
-                )}
-
-                {/* PR link banner — shown whenever a PR URL exists, regardless of stage */}
-                {cfg.mergeStrategy === 'pr' && resolvePrUrl(sel) && (
-                  <PrBanner
-                    prUrl={resolvePrUrl(sel)!}
-                    prState={sel.pr_state}
-                    commitSha={sel.commit_sha}
-                  />
                 )}
 
                 {/* Clarification — running (generating questions / processing answers) */}
