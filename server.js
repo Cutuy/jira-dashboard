@@ -173,13 +173,19 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
     db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
 
     const t = db.getTicket(ticketId);
-    let prUrl = t?.pr_url || null;
-    if (!prUrl) {
-      const baseFlag = t?.base_branch ? ` --base "${escShell(t.base_branch)}"` : '';
-      try {
-        prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`, worktreePath, cmdTimeout, register);
-        db.logActivity(ticketId, 'pr_created', prUrl);
-      } catch {
+    // Always attempt to create a fresh PR for this ticket's branch.
+    // An existing pr_url from a Bugbot action (or a prior lifecycle) points
+    // to a different branch — reusing it would skip PR creation and pull in
+    // stale CI results from the old branch.
+    let prUrl = null;
+    const baseFlag = t?.base_branch ? ` --base "${escShell(t.base_branch)}"` : '';
+    try {
+      prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`, worktreePath, cmdTimeout, register);
+      db.logActivity(ticketId, 'pr_created', prUrl);
+    } catch {
+      // PR may already exist for this branch (re-push). Keep existing URL.
+      prUrl = t?.pr_url || null;
+      if (!prUrl) {
         const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout, register);
         const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
         prUrl = `https://github.com/${repoPath}/pull/new/${branchName}`;
