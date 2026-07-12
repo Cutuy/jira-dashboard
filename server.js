@@ -919,7 +919,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
   }
 
   let worktreePath, branchName;
-  let fileMonitor = null;
+  let fileMonitor = null, monitorActive = false;
 
   try {
     // Set up (or reuse) the ticket's worktree. In pooled mode this claims a
@@ -956,22 +956,27 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
     db.logActivity(ticket.id, 'implement_start');
     db.updateTicketField(ticket.id, 'status', 'running');
 
-    // File-change monitor
+    // File-change monitor (async — never blocks the event loop)
     const seenFiles = new Set();
-    fileMonitor = setInterval(() => {
-      try {
-        const changed = execSync(`git diff --name-only`, { cwd: worktreePath, encoding: 'utf-8', timeout: 5000 }).trim();
-        if (changed) {
-          changed.split('\n').forEach(f => {
-            if (!seenFiles.has(f)) {
-              seenFiles.add(f);
-              db.logActivity(ticket.id, 'file_changed', f);
-              db.updateTicketField(ticket.id, 'updated_at', new Date().toISOString());
-            }
-          });
-        }
-      } catch { /* best-effort */ }
-    }, 2000);
+    monitorActive = true;
+    (async () => {
+      while (monitorActive) {
+        await new Promise(r => setTimeout(r, 2000));
+        if (!monitorActive) break;
+        try {
+          const changed = await execAsync(`git diff --name-only`, worktreePath, 5000);
+          if (changed) {
+            changed.split('\n').forEach(f => {
+              if (!seenFiles.has(f)) {
+                seenFiles.add(f);
+                db.logActivity(ticket.id, 'file_changed', f);
+                db.updateTicketField(ticket.id, 'updated_at', new Date().toISOString());
+              }
+            });
+          }
+        } catch { /* best-effort */ }
+      }
+    })();
 
     let _todo = { items: [], fresh: true };
     const onProgress = (line) => {
@@ -998,7 +1003,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       cwd: worktreePath,
     });
 
-    clearInterval(fileMonitor);
+    monitorActive = false;
 
     // Ticket was closed while implementing — stop here, don't commit or
     // transition it back into 'review'.
@@ -1015,7 +1020,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       ticket: db.getTicket(ticket.id),
     });
   } catch (err) {
-    clearInterval(fileMonitor);
+    monitorActive = false;
     // Killed because the ticket was closed mid-run — its worktree is already
     // released and the stage is terminal. Don't salvage-commit or reopen it.
     if (isClosed(ticket.id)) {
