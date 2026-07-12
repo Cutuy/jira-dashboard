@@ -4,6 +4,7 @@ import { PrBanner } from './components/pr-banner'
 import { ConsoleOutput } from './components/console-output'
 import { ResourceUsageSection } from './components/resource-usage-section'
 import { ImplementationPlanSection } from './components/implementation-plan-section'
+import { UnitTestsSection } from './components/unit-tests-section'
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
@@ -436,7 +437,7 @@ function SuggestionCard({ sug, onAccept, onDismiss }: { sug: Sug; onAccept: (s: 
 //   • error   → red pill + crash message
 //   • missing → "No tests run yet" (with Re-run button)
 // ─────────────────────────────────────────────────────────
-function TestReportPanel({
+export function TestReportPanel({
   test, onRerun, rerunning, autoExpandFail = true,
 }: {
   test?: TestRun | null
@@ -1693,21 +1694,12 @@ export default function App() {
                       </Section>
                     )}
                     {sel.worktree_path && (
-                      <Section
-                        title="Unit tests"
-                        hint={sel.latest_test?.status === 'pass' ? 'passed' :
-                              sel.latest_test?.status === 'fail' ? 'failed' :
-                              sel.latest_test?.status === 'running' ? 'running…' :
-                              sel.latest_test?.status === 'skip' ? 'skipped' : undefined}
-                      >
-                        <div id="tests-panel">
-                        <TestReportPanel
-                          test={sel.latest_test}
-                          onRerun={() => rerunTests(sel.id)}
-                          rerunning={testReRunning}
-                        />
-                        </div>
-                      </Section>
+                      <UnitTestsSection
+                        test={sel.latest_test}
+                        onRerun={() => rerunTests(sel.id)}
+                        rerunning={testReRunning}
+                        id="tests-panel"
+                      />
                     )}
                     {sel.worktree_path && (
                       <ResourceUsageSection activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
@@ -1746,21 +1738,12 @@ export default function App() {
                       estimatedComplexity={sel.estimated_complexity}
                       planNotes={sel.plan_notes}
                     />
-                    {sel.latest_test && (
-                      <Section
-                        title="Unit tests"
-                        hint={sel.latest_test.status === 'pass' ? 'passed' :
-                              sel.latest_test.status === 'fail' ? 'failed' :
-                              sel.latest_test.status === 'skip' ? 'skipped' : undefined}
-                      >
-                        <TestReportPanel
-                          test={sel.latest_test}
-                          onRerun={() => rerunTests(sel.id)}
-                          rerunning={testReRunning}
-                          autoExpandFail={false}
-                        />
-                      </Section>
-                    )}
+                    <UnitTestsSection
+                      test={sel.latest_test}
+                      onRerun={() => rerunTests(sel.id)}
+                      rerunning={testReRunning}
+                      autoExpandFail={false}
+                    />
                     <ResourceUsageSection activity={sel.activity || []} stageResources={sel.stage_resources} status={sel.status} />
                     {sel.questions.length > 0 && (
                       <Section title="Q&A history">
