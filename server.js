@@ -77,7 +77,7 @@ function bugbotPrHeadRef(record) {
 // clarifying questions so the user can guide the resolution.
 async function generateConflictClarification(ticket, conflictFiles, gitStatus, resolveOutput) {
   const conflictDetails = [
-    `Default branch: ${config.branchDefault}`,
+    `Default branch: ${ticket.base_branch || config.branchDefault}`,
     `Conflicted files:\n${conflictFiles.join('\n') || '(unknown)'}`,
     '',
     'Git status:',
@@ -229,7 +229,7 @@ async function finishImplement(ticketId, worktreePath, runTokens, onProgress) {
   }
 
   let diffSummary = '';
-  try { diffSummary = runGit(`log ${resolveDiffBase(worktreePath)}..HEAD --stat`, worktreePath); } catch {}
+  try { diffSummary = runGit(`log ${resolveDiffBase(worktreePath, ticket.base_branch)}..HEAD --stat`, worktreePath); } catch {}
   if (!diffSummary) {
     try { diffSummary = runGit(`diff --stat HEAD`, worktreePath); } catch { diffSummary = '(no diff)'; }
   }
@@ -335,7 +335,7 @@ async function getTicketResponse(id) {
   if (!t) return null;
   const stageResources = db.getStageResources(id);
   const latestTest = db.getLatestTestRun(id);
-  const behindCount = getBranchStaleness(t.worktree_path);
+  const behindCount = getBranchStaleness(t.worktree_path, t.base_branch);
   let pr_state = null;
   if (t.stage === 'pr_opened' || t.stage === 'done') {
     // Resolve PR URL: prefer ticket row, fall back to activity log
@@ -427,6 +427,10 @@ app.post('/api/tickets', (req, res) => {
     id, title: title.trim(), content: (content || '').trim(),
     created_at: now, updated_at: now,
     ...(base_branch && { base_branch: base_branch.trim() }),
+  });
+  // Auto-trigger clarification, same as dashboard UI
+  runClarify(ticket.id).catch(err => {
+    console.log(`[tickets] ${ticket.id} auto-clarify failed: ${err.message}`);
   });
   res.status(201).json(ticket);
 });
@@ -1073,7 +1077,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
       if (hadStash) popStashAndStage(ticket.worktree_path);
 
       const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-      db.logActivity(ticket.id, 'rebase_done', `Rebased onto ${config.branchDefault}: ${newSha.slice(0, 7)}`);
+      db.logActivity(ticket.id, 'rebase_done', `Rebased onto ${rebaseBranch}: ${newSha.slice(0, 7)}`);
       db.updateTicketField(ticket.id, 'status', 'idle');
       db.updateTicketField(ticket.id, 'commit_sha', newSha);
       assertWorktreeClean(ticket, { stage: 'rebase' });
@@ -1094,7 +1098,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
 
       // Build context file with conflict details for the coder
       const conflictDetails = [
-        `Default branch: ${config.branchDefault}`,
+        `Default branch: ${ticket.base_branch || config.branchDefault}`,
         `Worktree: ${ticket.worktree_path}`,
         `Conflicted files:\n${conflictFiles.join('\n') || '(unknown)'}`,
         '',
@@ -1149,7 +1153,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
             runGit(`rebase --continue`, ticket.worktree_path);
             if (hadStash) popStashAndStage(ticket.worktree_path);
             const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-            db.logActivity(ticket.id, 'rebase_done', `Coder resolved conflicts. Rebased onto ${config.branchDefault}: ${newSha.slice(0, 7)}`);
+            db.logActivity(ticket.id, 'rebase_done', `Coder resolved conflicts. Rebased onto ${ticket.base_branch || config.branchDefault}: ${newSha.slice(0, 7)}`);
             db.updateTicketField(ticket.id, 'status', 'idle');
             db.updateTicketField(ticket.id, 'commit_sha', newSha);
             assertWorktreeClean(ticket, { stage: 'rebase-resolved' });
@@ -1393,7 +1397,7 @@ app.get('/api/tickets/:id/diff', (req, res) => {
     return res.json({ diff: '(no worktree available)', files: [], explorer_prefix: null });
   }
   try {
-    const base = resolveDiffBase(ticket.worktree_path);
+    const base = resolveDiffBase(ticket.worktree_path, ticket.base_branch);
     let diff = runGit(`log ${base}..HEAD --oneline --stat`, ticket.worktree_path);
     let files = [];
     if (!diff) {
@@ -1405,9 +1409,9 @@ app.get('/api/tickets/:id/diff', (req, res) => {
           const nameOnly = runGit(`log ${base}...HEAD --name-only --format=""`, ticket.worktree_path);
           files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
         } catch {}
-        diff = `(commits already in ${config.branchDefault} — showing diff from merge-base)\n${diff}`;
+        diff = `(commits already in ${ticket.base_branch || config.branchDefault} — showing diff from merge-base)\n${diff}`;
       } else {
-        return res.status(400).json({ error: `No diff available — worktree has no changes ahead of ${config.branchDefault}`, files: [], explorer_prefix: null });
+        return res.status(400).json({ error: `No diff available — worktree has no changes ahead of ${ticket.base_branch || config.branchDefault}`, files: [], explorer_prefix: null });
       }
     } else {
       try {
@@ -1576,6 +1580,9 @@ app.post('/api/suggestions/:id/accept', (req, res) => {
   const ticket = db.createTicket({ id, title: sug.title.trim(), content: (sug.content || '').trim(), created_at: now, updated_at: now });
   suggestions = suggestions.filter(s => s.id !== req.params.id);
   if (suggestions.length < 2) generateSuggestions();
+  runClarify(ticket.id).catch(err => {
+    console.log(`[suggestions] ${ticket.id} auto-clarify failed: ${err.message}`);
+  });
   res.status(201).json(ticket);
 });
 

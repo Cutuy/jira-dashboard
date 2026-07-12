@@ -28,8 +28,8 @@ function execAsync(command, cwd, timeout, onSpawn) {
   });
 }
 
-function resolveDiffBase(worktreePath) {
-  const base = config.branchDefault;
+function resolveDiffBase(worktreePath, baseBranch) {
+  const base = baseBranch || config.branchDefault;
   let best = null;
   let bestCount = Infinity;
   for (const ref of [`origin/${base}`, base]) {
@@ -70,10 +70,11 @@ function assertWorktreeClean(ticket, { stage, allow = false } = {}) {
   }
 }
 
-function getBranchStaleness(worktreePath) {
+function getBranchStaleness(worktreePath, baseBranch) {
   if (!worktreePath || !fs.existsSync(path.join(worktreePath, '.git'))) return null;
+  const base = baseBranch || config.branchDefault;
   try {
-    const count = runGit(`rev-list --count HEAD..${config.branchDefault}`, worktreePath);
+    const count = runGit(`rev-list --count HEAD..${base}`, worktreePath);
     return parseInt(count, 10) || 0;
   } catch {
     return null;
