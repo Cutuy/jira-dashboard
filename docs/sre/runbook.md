@@ -115,9 +115,9 @@ sqlite3 /home/example-user/example-project/.jira-dashboard/store.db \
    WHERE id = '<ticket-id>';"
 ```
 
-**Note:** Tickets created before the `base_branch` column migration
-(commit `7284fa2`) will have `base_branch = NULL` even if the Bugbot payload
-included a base branch. Manually set it as above.
+**Note:** Tickets created before the `base_branch` column migration will have
+`base_branch = NULL` even if the creating API request included a base branch.
+Manually set it as above.
 
 ---
 

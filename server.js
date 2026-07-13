@@ -1,5 +1,5 @@
 const express = require('express');
-const { execFileSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -17,13 +17,6 @@ const { runGit, execAsync, resolveDiffBase, popStashAndStage, assertWorktreeClea
 const { runTicketTests, buildTestContextForPrompt } = require('./test-runner');
 const { startPrChecker } = require('./pr-checker');
 const { runMachineChecks } = require('./machine-checks');
-const {
-  BugbotActionStore,
-  renderConfirmationPage: renderBugbotConfirmationPage,
-  reviewBodyWithTicketLink: bugbotReviewBodyWithTicketLink,
-  ticketFromAction: ticketFromBugbotAction,
-  ticketIdForAction: ticketIdForBugbotAction,
-} = require('./bugbot-actions');
 let _recheckTicket = null;
 let _startWatchingPr = null;
 let _runClarify = null;
@@ -33,44 +26,6 @@ const { PREPUSH_RUN_PREFIX, TEST_RUN_PREFIX, STAGE_LABELS, uid, slugFromTitle, t
 
 const PORT = config.port;
 const DATA_DIR = config.dataDir;
-const bugbotActions = new BugbotActionStore(DATA_DIR);
-
-function bugbotDashboardUrl() {
-  return process.env.BUGBOT_DASHBOARD_URL
-    || `http://127.0.0.1:${PORT}`;
-}
-
-function updateBugbotSourceReview(record, ticket) {
-  const { action } = record;
-  if (!action.review_id) return false;
-  const endpoint = `repos/${action.repository}/pulls/${action.pr}/reviews/${action.review_id}`;
-  const review = JSON.parse(execFileSync('gh', [
-    'api', '--hostname', 'gitent.corp.example.team', endpoint,
-  ], { encoding: 'utf8', timeout: 15_000 }));
-  const ticketUrl = `${bugbotDashboardUrl()}/#ticket/${encodeURIComponent(ticket.id)}`;
-  const updated = bugbotReviewBodyWithTicketLink(review.body, record.id, ticketUrl);
-  if (!updated.updated) {
-    if (String(review.body || '').includes(ticketUrl)) return false;
-    throw new Error('Source review no longer contains this Bugbot action link');
-  }
-  execFileSync('gh', [
-    'api', '--hostname', 'gitent.corp.example.team', '--method', 'PUT', endpoint, '--input', '-',
-  ], {
-    encoding: 'utf8',
-    input: JSON.stringify({ body: updated.body }),
-    timeout: 15_000,
-  });
-  return true;
-}
-
-function bugbotPrHeadRef(record) {
-  if (record.action.head_ref) return record.action.head_ref;
-  const endpoint = `repos/${record.action.repository}/pulls/${record.action.pr}`;
-  const pull = JSON.parse(execFileSync('gh', [
-    'api', '--hostname', 'gitent.corp.example.team', endpoint,
-  ], { encoding: 'utf8', timeout: 15_000 }));
-  return pull.head?.ref || '';
-}
 
 // ── Rebase conflict clarification ──────────────────────────
 // When the LLM can't auto-resolve a rebase conflict, generate
@@ -179,7 +134,7 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
     if (t?.pr_url) {
       // Check if the existing PR's head branch matches ours. If it does, we can
       // re-push to the same PR. If not, we must create a fresh PR to avoid
-      // inheriting stale CI results from a different branch (e.g. a Bugbot PR).
+      // inheriting stale CI results from a different source branch.
       const m = t.pr_url.match(/^https?:\/\/([^\/]+)\/.+\/pull\/(\d+)/);
       if (m) {
         const host = m[1];
@@ -280,58 +235,6 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public-spa')));
 
-app.post('/api/bugbot/actions', (req, res) => {
-  try {
-    const record = bugbotActions.create(req.body);
-    const publicUrl = bugbotDashboardUrl();
-    res.status(201).json({ id: record.id, url: `${publicUrl}/bugbot/fix/${record.id}` });
-  } catch (error) {
-    res.status(400).json({ error: `Invalid Bugbot review action: ${error.message}` });
-  }
-});
-
-// GET is read-only so link previews cannot create work accidentally.
-app.get('/bugbot/fix/:id', (req, res) => {
-  try {
-    const record = bugbotActions.get(req.params.id);
-    const existing = db.getTicket(record.ticket_id || ticketIdForBugbotAction(record));
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'");
-    res.type('html').send(renderBugbotConfirmationPage(record, existing));
-  } catch (error) {
-    res.status(400).type('text').send(`Invalid Bugbot fix link: ${error.message}`);
-  }
-});
-
-app.post('/api/bugbot/fix/:id', express.urlencoded({ extended: false, limit: '64kb' }), (req, res) => {
-  try {
-    const record = bugbotActions.get(req.params.id);
-    const ticketId = ticketIdForBugbotAction(record);
-    let ticket = db.getTicket(ticketId);
-    if (!ticket) {
-      const selected = Array.isArray(req.body.selected)
-        ? req.body.selected
-        : [req.body.selected].filter(Boolean);
-      const notes = Object.fromEntries(Object.entries(req.body)
-        .filter(([key]) => key.startsWith('note_'))
-        .map(([key, value]) => [key.slice(5), value]));
-      const baseBranch = bugbotPrHeadRef(record);
-      ticket = db.createTicket(ticketFromBugbotAction(
-        record, selected, notes, new Date(), baseBranch,
-      ));
-      bugbotActions.setTicket(record.id, ticket.id);
-    }
-    try {
-      updateBugbotSourceReview(record, ticket);
-    } catch (error) {
-      console.error(`Failed to update Bugbot review ${record.action.review_id}: ${error.message}`);
-    }
-    res.redirect(303, `/#ticket/${encodeURIComponent(ticket.id)}`);
-  } catch (error) {
-    res.status(400).json({ error: `Invalid Bugbot fix link: ${error.message}` });
-  }
-});
-
 // SPA fallback
 app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public-spa', 'index.html'));
@@ -389,7 +292,6 @@ async function getTicketResponse(id) {
           }
         } catch {}
       }
-    }
   }
   const updated = pr_state ? db.getTicket(id) : t;
   return { ...updated, stage_resources: stageResources, latest_test: latestTest, behind_count: behindCount, pr_state };
