@@ -29,13 +29,13 @@ prompt(){ echo -e "  ${YELLOW}?${NC} $1" >&2; read -r REPLY; echo "$REPLY"; }
 # ── Step 0: Prerequisites ──────────────────────────────────
 step "Prerequisites"
 
-command -v node >/dev/null 2>&1 || fail "Node.js is not installed. Install Node.js >= 18 first."
+command -v node >/dev/null 2>&1 || fail "Node.js is not installed. Install Node.js >= 24.18 first."
 command -v npm  >/dev/null 2>&1 || fail "npm is not installed."
 command -v git  >/dev/null 2>&1 || fail "git is not installed."
 OS="$(uname -s)"
-
-NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
-[ "$NODE_MAJOR" -ge 18 ] || fail "Node.js >= 18 required (found v$(node -v)). Upgrade Node.js first."
+NODE_VERSION=$(node -p "process.versions.node")
+node -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major === 24 && minor >= 18 ? 0 : 1)" ||
+  fail "Node.js >= 24.18 and < 25 required (found v${NODE_VERSION}). Upgrade Node.js first."
 
 ok "Node.js $(node -v)  npm $(npm -v)  git $(git --version | awk '{print $3}')"
 
