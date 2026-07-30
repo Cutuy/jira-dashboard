@@ -4,6 +4,9 @@
   "private": true,
   "description": "Jira-like ticket dashboard with configurable project and coder backend",
   "main": "server.js",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
   "scripts": {
     "start": "node server.js",
     "test": "node tests/config.test.js && node tests/prompts.test.js && node tests/coder.test.js && node tests/server-helpers.test.js && node tests/git-workflow.test.js && node tests/worktree-pool.test.js && node tests/worktree-manager.test.js && node tests/pr-checker.test.js",
