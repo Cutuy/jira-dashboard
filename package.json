@@ -2,7 +2,7 @@
   "name": "jira-dashboard",
   "version": "1.0.0",
   "private": true,
-  "description": "Jira-like ticket dashboard with configurable project and coder backend",
+  "description": "Local kanban board for working with AI coding agents",
   "main": "server.js",
   "engines": {
     "node": ">=24.18.0 <25"
