@@ -6,6 +6,8 @@ task uses a separate Git worktree.
 
 ![Ticket flow from backlog to done](docs/demo.gif)
 
+![Architecture](docs/architecture.svg)
+
 ## Quick start
 
 You'll need Git, Node.js 24.18 or later in the 24.x series, npm, and a configured
@@ -28,6 +30,18 @@ To track another project, run setup again with a different port.
 Tasks move through backlog, clarification, implementation, and review. You can
 follow progress, inspect changes and test output, and leave feedback before
 accepting changes or opening a pull request. The board also works on mobile.
+
+| Stage | What happens | Desktop |
+| --- | --- | --- |
+| Backlog | Add a task. | ![Backlog](docs/screenshots/desktop-home.png) |
+| Clarification | Answer the agent's questions. | ![Clarification](docs/screenshots/desktop-clarification.png) |
+| Implementation | Follow changes in a separate worktree. | ![Implementation](docs/screenshots/desktop-implementation.png) |
+| Review | Inspect the diff and test results, then give feedback or accept. | ![Review](docs/screenshots/desktop-review.png) |
+| Done | Accepted changes are applied and the task closes. | ![Done](docs/screenshots/desktop-done.png) |
+
+| Mobile board | Mobile ticket |
+| --- | --- |
+| ![Mobile home](docs/screenshots/mobile-home.png) | ![Mobile ticket](docs/screenshots/mobile-ticket.png) |
 
 ## Configuration
 
