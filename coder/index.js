@@ -3,7 +3,7 @@
 // New backends: add a file under coder/<name>.js and register it below.
 
 const path = require('path');
-const { spawn } = require('child_process');
+const { runProcess } = require('../process-runner');
 const config = require('../config');
 const store = require('./store');
 const { createResourceMonitor } = require('../monitor');
@@ -81,75 +81,80 @@ function run(prompt, opts = {}) {
     }));
   }
 
-  return new Promise((resolve, reject) => {
-    const args = backend.buildArgs(prompt, sessionId, title);
-    const spawnOpts = buildSpawnOptions(backend, opts);
-
-    const proc = spawn(config.coder.bin, args, spawnOpts);
-    // Hand the live process to the caller so it can be force-killed (e.g. when
-    // a ticket is closed mid-run) without waiting for it to finish.
-    if (typeof opts.onSpawn === 'function') opts.onSpawn(proc);
-
-    let stdout = '';
-    let stderr = '';
-    const resMonitor = createResourceMonitor(proc.pid, data => {
+  const args = backend.buildArgs(prompt, sessionId, title);
+  const spawnOpts = buildSpawnOptions(backend, opts);
+  // CLI event streams can be verbose. Retain at most 4 MiB of stdout and
+  // 64 KiB of stderr; output overflow is an explicit incomplete-result error.
+  const maxStdoutBytes = 4 * 1024 * 1024;
+  let outputPrefix = Buffer.alloc(0);
+  let lineBuffer = '';
+  let resMonitor;
+  return runProcess(config.coder.bin, args, {
+    ...spawnOpts,
+    timeoutMs: spawnOpts.timeout,
+    signal: opts.signal,
+    maxStdoutBytes,
+    onSpawn(proc) {
+      resMonitor = createResourceMonitor(proc.pid, data => {
+        if (!onProgress) return;
+        let tokensStr = '';
+        try {
+          const s = backend.stats();
+          if (parseInt(s.input) > 0) tokensStr = ` tokens_in=${s.input} tokens_out=${s.output} cost=$${s.cost || ''}`;
+        } catch {}
+        onProgress(`[resource] cpu=${data.cpuSec}s mem=${data.memMB}MB threads=${data.threads} elapsed=${data.elapsed}s ncores=${data.ncores}${tokensStr}`);
+      });
+      opts.onSpawn?.(proc);
+    },
+    onStdout(data) {
+      // Session initialization is normally the first event. Preserve a bounded
+      // prefix too so an overflow error can still report its original session.
+      if (outputPrefix.length < 64 * 1024) {
+        outputPrefix = Buffer.concat([outputPrefix, data.subarray(0, 64 * 1024 - outputPrefix.length)]);
+      }
       if (!onProgress) return;
-      let tokensStr = '';
-      try {
-        const s = resolveBackend().stats();
-        if (parseInt(s.input) > 0) tokensStr = ` tokens_in=${s.input} tokens_out=${s.output} cost=$${s.cost || ''}`;
-      } catch {}
-      onProgress(`[resource] cpu=${data.cpuSec}s mem=${data.memMB}MB threads=${data.threads} elapsed=${data.elapsed}s ncores=${data.ncores}${tokensStr}`);
-    });
-
-    let lineBuffer = '';
-    proc.stdout.on('data', d => {
-      const chunk = d.toString();
-      stdout += chunk;
-      if (onProgress) {
-        lineBuffer += chunk;
-        const lines = lineBuffer.split('\n');
-        // All but the last element are complete lines (trailing \n means
-        // the last element is empty).  The last element is either a
-        // complete (empty) line or an incomplete fragment — buffer it.
-        lineBuffer = lines.pop() || '';
-        for (const l of lines) {
-          const formatted = backend.formatProgress ? backend.formatProgress(l) : null;
-          if (formatted !== null) {
-            onProgress(formatted);
-          } else if (!/^\s*[{[]/.test(l)) {
-            onProgress(l);
-          }
-        }
+      lineBuffer += data.toString();
+      const lines = lineBuffer.split('\n');
+      // Bound an unterminated progress record as well as retained raw output.
+      lineBuffer = (lines.pop() || '').slice(-maxStdoutBytes);
+      for (const line of lines) {
+        const formatted = backend.formatProgress ? backend.formatProgress(line) : null;
+        if (formatted !== null) onProgress(formatted);
+        else if (!/^\s*[{[]/.test(line)) onProgress(line);
       }
-    });
-    proc.stderr.on('data', d => { stderr += d.toString(); });
-
-    proc.on('close', code => {
-      // Parse output FIRST so store.setUsage() captures the final
-      // token/cost values before the resource monitor's last poll.
-      const raw = stdout.trim();
-      const parsed = backend.parseOutput ? backend.parseOutput(raw) : { text: raw, tokens: null, sessionId: null };
+    },
+  }).then(result => {
+    let parsed;
+    try {
+      const prefix = outputPrefix.toString('utf8');
+      const raw = (result.stdoutTruncated
+        ? prefix.slice(0, Math.max(0, prefix.lastIndexOf('\n'))) + '\n' + result.stdout
+        : result.stdout).trim();
+      parsed = backend.parseOutput ? backend.parseOutput(raw) : { text: raw, tokens: null, sessionId: null };
+    } finally {
       if (resMonitor) { resMonitor.poll(); resMonitor.close(); }
-      if (code === 0) {
-        if (!parsed.text && stderr.trim()) {
-          reject(new Error(`Coder produced no output: ${stderr.slice(-500)}`));
-        } else {
-          resolve(parsed);
-        }
-      } else if (code !== null && parsed.text) {
-        resolve(parsed);
-      } else if (code === null) {
-        reject(new Error(`Coder killed (signal/timeout): ${(parsed.text || stderr || '').slice(-500)}`));
-      } else {
-        reject(new Error(`Coder exited ${code}: ${stderr.slice(-500)}`));
-      }
-    });
-
-    proc.on('error', err => {
-      if (resMonitor) resMonitor.close();
-      reject(err);
-    });
+    }
+    let message;
+    if (result.error) message = `Coder process error: ${result.error.message}`;
+    else if (result.cancelled) message = 'Coder cancelled';
+    else if (result.timedOut) message = 'Coder timed out';
+    else if (result.exitCode !== 0) message = result.signal
+      ? `Coder killed (${result.signal})` : `Coder exited ${result.exitCode}`;
+    else if (result.stdoutTruncated) message = `Coder output exceeded ${maxStdoutBytes} bytes (truncated)`;
+    else if (!parsed.text && result.stderr.trim()) message = 'Coder produced no output';
+    if (message) {
+      const detail = (result.stderr || parsed.text || '').slice(-500);
+      const err = new Error(message + (detail ? `: ${detail}` : ''), { cause: result.error || undefined });
+      Object.assign(err, {
+        partialResult: parsed, text: parsed.text,
+        stdout: result.stdout, stderr: result.stderr,
+        exitCode: result.exitCode, signal: result.signal,
+        timedOut: result.timedOut, cancelled: result.cancelled,
+        stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated,
+      });
+      throw err;
+    }
+    return parsed;
   });
 }
 

@@ -223,6 +223,48 @@ try {
   });
 })();
 
+// ── Validation and partial overrides ─────────────────────
+(function testPartialTimeoutOverridesPreserveStageLimits() {
+  // Arrange: one explicitly tuned stage must not disable every other timeout.
+  withProjectDir(() => withoutEnv(() => withConfigJson(
+    orig => ({ ...orig, coder: { ...orig.coder, timeouts: { clarify: 17 } } }),
+    () => {
+      // Act
+      const cfg = reloadConfig();
+      // Assert
+      assert.strictEqual(cfg.coder.timeouts.clarify, 17);
+      assert.strictEqual(cfg.coder.timeouts.implement, 600_000);
+      assert.strictEqual(cfg.coder.timeouts.command, 30_000);
+      assert.strictEqual(cfg.coder.timeouts.push, 600_000);
+    }
+  )));
+  console.log('PASS: partial timeout overrides retain limits for other stages');
+})();
+
+(function testInvalidConfigurationFailsDuringLoading() {
+  withProjectDir(() => {
+    // Arrange / Act / Assert: both persisted and environment settings fail early.
+    withConfigJson(orig => ({ ...orig, worktrees: { count: -1 } }), () => {
+      assert.throws(reloadConfig, /Invalid config.json.*worktrees\/count/);
+    });
+    withEnv('NUM_WORKTREES=-1', () => assert.throws(reloadConfig, /Invalid NUM_WORKTREES/));
+    withEnv('PORT=not-a-port', () => assert.throws(reloadConfig, /Invalid PORT/));
+    withEnv('JIRA_PR_IGNORE_CHECKS=[', () => assert.throws(reloadConfig, /Invalid JIRA_PR_IGNORE_CHECKS.*regular expression/));
+    withConfigJson(orig => ({ ...orig, coder: { ...orig.coder, timeouts: { implement: -1 } } }), () => {
+      assert.throws(reloadConfig, /Invalid coder.timeouts.implement/);
+    });
+  });
+  console.log('PASS: invalid schema values, numeric settings and patterns fail during loading');
+})();
+
+(function testExplicitFalseOverridesEnabledTests() {
+  withProjectDir(() => withConfigJson(orig => ({ ...orig, test: { ...orig.test, enabled: true } }), () => {
+    // Arrange / Act / Assert: an explicit deployment override disables auto tests.
+    withEnv('JIRA_TEST_ENABLED=false', () => assert.strictEqual(reloadConfig().test.enabled, false));
+  }));
+  console.log('PASS: false test override takes precedence over config.json');
+})();
+
 // ── Git-aware project discovery (worktree case) ────────────
 (function testGitAwareFromWorktree() {
   // Build a temp git repo + worktree, chdir into the worktree, and verify

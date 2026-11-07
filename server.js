@@ -1,8 +1,9 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { runProcess } = require('./process-runner');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const Ajv = require('ajv');
 
 const config = require('./config');
@@ -12,9 +13,9 @@ const worktrees = require('./worktree-manager');
 const helpers = require('./helpers');
 const { sseClients, sseBroadcast } = require('./sse');
 const { writeTicketContext } = require('./context');
-const { runCoder, killTicketProcess, isClosed, ticketGone, captureSessionId, runningProcs } = require('./coder-runner');
-const { runGit, execAsync, resolveDiffBase, popStashAndStage, assertWorktreeClean, getBranchStaleness, commitWorktreeChanges } = require('./git-utils');
-const { runTicketTests, buildTestContextForPrompt } = require('./test-runner');
+const { runCoder, killTicketProcess, cancelTicketOperation, runTicketOperation, assertTicketActive, waitForTicket, isClosed, ticketGone, captureSessionId, runningProcs } = require('./coder-runner');
+const { runGit, execAsync, resolveDiffBase, popStashAndStage, assertWorktreeClean, getBranchStaleness, commitWorktreeChanges, prepareReadyCommit, integrateBranch } = require('./git-utils');
+const { runTicketTests, stopTicketTests, recoverInterruptedTestRuns, buildTestContextForPrompt } = require('./test-runner');
 const { startPrChecker } = require('./pr-checker');
 const { runMachineChecks } = require('./machine-checks');
 let _recheckTicket = null;
@@ -26,6 +27,40 @@ const { PREPUSH_RUN_PREFIX, TEST_RUN_PREFIX, STAGE_LABELS, uid, slugFromTitle, t
 
 const PORT = config.port;
 const DATA_DIR = config.dataDir;
+
+// Every state-changing workflow owns its complete async lifetime, including
+// worktree acquisition and structured-output waits. Close/delete can cancel
+// that owner and await it before reclaiming the worktree.
+function ticketOperation(handler) {
+  return async (req, res) => {
+    try {
+      return await runTicketOperation(req.params.id, () => handler(req, res));
+    } catch (err) {
+      if (err.code === 'TICKET_CANCELLED' || ticketGone(req.params.id)) {
+        return res.json({ closed: true, ticket: db.getTicket(req.params.id) });
+      }
+      if (err.code === 'TICKET_BUSY') return res.status(409).json({ error: err.message });
+      throw err;
+    }
+  };
+}
+
+// A close and a delete may arrive together. Serialize their cleanup so the
+// deleting request cannot remove the row while close is still recording it.
+const terminalActions = new Map();
+function terminalOperation(handler) {
+  return async (req, res) => {
+    const id = req.params.id;
+    const previous = terminalActions.get(id);
+    const action = (async () => {
+      if (previous) await previous.catch(() => {});
+      return handler(req, res);
+    })();
+    terminalActions.set(id, action);
+    try { return await action; }
+    finally { if (terminalActions.get(id) === action) terminalActions.delete(id); }
+  };
+}
 
 // ── Rebase conflict clarification ──────────────────────────
 // When the LLM can't auto-resolve a rebase conflict, generate
@@ -69,6 +104,7 @@ async function generateConflictClarification(ticket, conflictFiles, gitStatus, r
   const result = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress, cwd });
     captureSessionId(ticket.id, result.sessionId);
     db.updateTicketField(ticket.id, 'status', 'idle');
+    assertTicketActive(ticket.id);
     const output = result.text;
 
     let parsed;
@@ -96,6 +132,7 @@ async function generateConflictClarification(ticket, conflictFiles, gitStatus, r
     }
     return questions;
   } catch (err) {
+    assertTicketActive(ticket.id);
     db.logActivity(ticket.id, 'conflict_clarify_error', err.message);
     db.updateTicketField(ticket.id, 'status', 'idle');
     db.deleteQuestionsForTicket(ticket.id);
@@ -119,11 +156,14 @@ async function generateConflictClarification(ticket, conflictFiles, gitStatus, r
 // every terminal state write is guarded by ticketGone() so a completed push
 // never resurrects a ticket the user already closed or removed.
 async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
-  const pushTimeout = config.coder.timeouts.push || 600_000;
+  const pushTimeout = config.coder.timeouts.push ?? 600_000;
   const cmdTimeout = config.coder.timeouts.command;
   const register = (proc) => runningProcs.set(ticketId, proc);
+  assertTicketActive(ticketId);
   try {
-    await execAsync(`git push --force origin ${branchName}`, worktreePath, pushTimeout, register);
+    let expectedRemote = '';
+    try { expectedRemote = runGit(`rev-parse --verify refs/remotes/origin/${branchName}`, worktreePath); } catch {}
+    await execAsync(`git push --force-with-lease="refs/heads/${escShell(branchName)}:${expectedRemote}" origin "HEAD:refs/heads/${escShell(branchName)}"`, worktreePath, pushTimeout, register);
     if (ticketGone(ticketId)) return;
     db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
 
@@ -144,10 +184,11 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
             `gh pr view ${prNum} --hostname ${host} --json headRefName --jq .headRefName`,
             worktreePath, cmdTimeout, register
           );
+          assertTicketActive(ticketId);
           if (headRef.trim() === branchName) {
             prUrl = t.pr_url; // same branch — reuse
           }
-        } catch {}
+        } catch { assertTicketActive(ticketId); }
       }
     }
 
@@ -155,13 +196,16 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
       try {
         prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`,
           worktreePath, cmdTimeout, register);
+        assertTicketActive(ticketId);
         db.logActivity(ticketId, 'pr_created', prUrl);
         // Fresh PR — clear stale PR state inherited from prior lifecycle
         db.updateTicketField(ticketId, 'pr_rework_needed', 0);
         db.updateTicketField(ticketId, 'pr_touched_checks', null);
         db.updateTicketField(ticketId, 'review_feedback', null);
       } catch {
+        assertTicketActive(ticketId);
         const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout, register);
+        assertTicketActive(ticketId);
         const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
         prUrl = `https://github.com/${repoPath}/pull/new/${branchName}`;
         db.logActivity(ticketId, 'pr_link', prUrl);
@@ -170,7 +214,11 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
 
     if (ticketGone(ticketId)) return;
     db.updateTicket(ticketId, { stage: 'pr_opened', status: 'idle', pr_url: prUrl });
-    await worktrees.release(ticketId);
+    try { await worktrees.release(ticketId); }
+    catch (err) {
+      if (!ticketGone(ticketId)) db.logActivity(ticketId, 'cleanup_warn', `PR opened, but worktree cleanup failed: ${err.message}`);
+    }
+    if (ticketGone(ticketId)) return;
     // Kick off periodic PR watching for this ticket.  Idempotent — safe even
     // if scheduleAll already picked it up (e.g. after a server restart).
     if (typeof _startWatchingPr === 'function') _startWatchingPr(ticketId);
@@ -194,6 +242,7 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
 // ── Post-implement finalizer (commit, diff, transition) ─────
 // Shared between the /implement handler and crash-recovery re-attach.
 async function finishImplement(ticketId, worktreePath, runTokens, onProgress) {
+  assertTicketActive(ticketId);
   const ticket = db.getTicket(ticketId);
 
   const tokens = runTokens || { cost: 0, input: '0', output: '0' };
@@ -284,16 +333,25 @@ async function getTicketResponse(id) {
           const parsed = JSON.parse(stdout);
           if (parsed?.state) {
             pr_state = parsed.state.toLowerCase();
-            if (t.stage === 'pr_opened' && (pr_state === 'merged' || pr_state === 'closed')) {
-              db.updateTicket(t.id, { stage: 'done' });
-              db.logActivity(t.id, 'pr_' + pr_state, `PR ${m[1]} ${pr_state} — auto-transitioned to done`);
-              await worktrees.release(t.id);
+            if (pr_state === 'merged' || pr_state === 'closed') {
+              await runTicketOperation(id, async run => {
+                const current = db.getTicket(id);
+                if (!current || current.stage !== 'pr_opened' || current.status === 'running' || current.pr_url !== t.pr_url) return;
+                db.updateTicket(id, { stage: 'done', status: 'idle' });
+                await stopTicketTests(id);
+                if (run.controller.signal.aborted || !db.getTicket(id)) return;
+                await worktrees.release(id);
+                if (!run.controller.signal.aborted && db.getTicket(id)) {
+                  db.logActivity(id, 'pr_' + pr_state, `PR ${m[1]} ${pr_state} — auto-transitioned to done`);
+                }
+              });
             }
           }
         } catch {}
       }
   }
-  const updated = pr_state ? db.getTicket(id) : t;
+  const updated = db.getTicket(id);
+  if (!updated) return null;
   return { ...updated, stage_resources: stageResources, latest_test: latestTest, behind_count: behindCount, pr_state };
 }
 
@@ -365,6 +423,19 @@ app.post('/api/tickets', (req, res) => {
 // ── Stage 1: Clarification ────────────────────────────────
 // Shared logic for both the HTTP endpoint and auto-trigger from PR checker.
 async function runClarify(ticketId) {
+  return runTicketOperation(ticketId, async () => {
+    try { return await runClarifyOwned(ticketId); }
+    catch (err) {
+      if (!ticketGone(ticketId)) {
+        db.logActivity(ticketId, 'clarify_error', err.message);
+        db.updateTicketField(ticketId, 'status', 'idle');
+      }
+      throw err;
+    }
+  });
+}
+
+async function runClarifyOwned(ticketId) {
   const ticket = db.getTicket(ticketId);
   if (!ticket || ticket.stage !== 'clarification' || ticket.status === 'running') return;
 
@@ -403,9 +474,12 @@ async function runClarify(ticketId) {
     try {
       const fresh = db.getTicket(ticket.id);
       const { worktreePath } = await worktrees.acquire(fresh);
+      assertTicketActive(ticket.id);
       db.logActivity(ticket.id, 'worktree_reacquired', worktreePath);
     } catch (e) {
+      assertTicketActive(ticket.id);
       db.logActivity(ticket.id, 'worktree_reacquire_failed', e.message);
+      throw e;
     }
   }
 
@@ -421,8 +495,8 @@ async function runClarify(ticketId) {
     }
   };
   const result = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress, cwd });
+  assertTicketActive(ticket.id);
   captureSessionId(ticket.id, result.sessionId);
-  db.updateTicketField(ticket.id, 'status', 'idle');
 
   // Read the coder's structured output from the file, with text fallback
   let parsed;
@@ -436,7 +510,7 @@ async function runClarify(ticketId) {
     } catch (e1) {
       fileParseError = e1;
       if (attempt < 29) {
-        await new Promise(r => setTimeout(r, 1000));
+        await waitForTicket(ticket.id, 1000);
       }
     }
   }
@@ -444,6 +518,7 @@ async function runClarify(ticketId) {
     const jsonMatch = result.text.match(/\{[\s\S]*\}/);
     if (jsonMatch) { try { parsed = JSON.parse(jsonMatch[0]); } catch {} }
   }
+  assertTicketActive(ticket.id);
   try { fs.unlinkSync(outPath); } catch {}
 
   if (!parsed) {
@@ -482,7 +557,7 @@ async function runClarify(ticketId) {
       plan: planText,
       estimated_complexity: parsed.estimated_complexity || null,
       plan_notes: notes || null,
-      stage: 'implementation',
+      stage: 'implementation', status: 'idle',
     });
     db.logActivity(ticket.id, 'clarified_skip', planText.slice(0, 200));
     if (parsed.files_to_modify) {
@@ -501,10 +576,11 @@ async function runClarify(ticketId) {
     }
   }
   if (notes) db.logActivity(ticket.id, 'clarify_notes', notes);
+  db.updateTicketField(ticket.id, 'status', 'idle');
   return { clarified: false };
 }
 
-app.post('/api/tickets/:id/clarify', async (req, res) => {
+app.post('/api/tickets/:id/clarify', ticketOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'clarification') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
@@ -517,14 +593,13 @@ app.post('/api/tickets/:id/clarify', async (req, res) => {
     }
     res.json(db.getTicket(ticket.id));
   } catch (err) {
-    db.logActivity(ticket.id, 'clarify_error', err.message);
-    db.updateTicketField(ticket.id, 'status', 'idle');
+    if (ticketGone(ticket.id)) return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
 // ── Submit answers ────────────────────────────────────────
-app.post('/api/tickets/:id/answer', async (req, res) => {
+app.post('/api/tickets/:id/answer', ticketOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'clarification') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
@@ -569,6 +644,7 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
     };
     const result = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress, cwd: config.projectDir });
     db.updateTicketField(ticket.id, 'status', 'idle');
+    assertTicketActive(ticket.id);
     const output = result.text;
 
     let parsed;
@@ -608,14 +684,15 @@ app.post('/api/tickets/:id/answer', async (req, res) => {
     const finalTicket = db.getTicket(ticket.id);
     res.json({ clarified: true, plan: planText, notes: parsed.notes, ticket: finalTicket });
   } catch (err) {
+    if (ticketGone(ticket.id)) return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
     db.logActivity(ticket.id, 'answer_error', err.message);
     db.updateTicketField(ticket.id, 'status', 'idle');
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
 // ── PR tasks (non-code, gh CLI only) ─────────────────────
-app.post('/api/tickets/:id/pr-tasks', async (req, res) => {
+app.post('/api/tickets/:id/pr-tasks', ticketOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'pr_opened') {
@@ -707,6 +784,7 @@ app.post('/api/tickets/:id/pr-tasks', async (req, res) => {
     };
     const result = await runCoder(ticket.id, prompt, { timeout: config.coder.timeouts.clarify, onProgress, cwd: config.projectDir });
 
+    assertTicketActive(ticket.id);
     // Track token usage from the coder run
     if (result?.tokens) {
       const t = db.getTicket(ticket.id);
@@ -779,7 +857,7 @@ app.post('/api/tickets/:id/pr-tasks', async (req, res) => {
       const feedback = `PR #${prNum} — checks that need code changes:\n${reasonText}`;
       db.updateTicket(ticket.id, { status: 'idle', stage: 'clarification', plan: null, review_feedback: feedback, pr_rework_needed: 1, pr_touched_checks: touchedJson });
       db.logActivity(ticket.id, 'pr_tasks_rework', `Rework needed: ${reworkList.map(c => c.name || c).join(', ')}`);
-      if (_runClarify) _runClarify(ticket.id);
+      if (_runClarify) setImmediate(() => _runClarify(ticket.id).catch(() => {}));
     } else {
       db.updateTicket(ticket.id, { status: 'idle', pr_rework_needed: 0, pr_touched_checks: touchedJson });
       db.logActivity(ticket.id, 'pr_tasks_done', 'PR tasks addressed');
@@ -797,14 +875,15 @@ app.post('/api/tickets/:id/pr-tasks', async (req, res) => {
     sseBroadcast(ticket.id, 'ticket', final);
     res.json(final);
   } catch (err) {
+    if (ticketGone(ticket.id)) return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
     db.logActivity(ticket.id, 'pr_tasks_error', err.message);
     db.updateTicketField(ticket.id, 'status', 'idle');
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
 // ── Stage 2: Implementation ───────────────────────────────
-app.post('/api/tickets/:id/implement', async (req, res) => {
+app.post('/api/tickets/:id/implement', ticketOperation(async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'implementation' && ticket.stage !== 'review') {
@@ -819,15 +898,19 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
     ticket = db.getTicket(ticket.id);
   }
 
+  db.updateTicketField(ticket.id, 'status', 'running');
   let worktreePath, branchName;
-  let fileMonitor = null, monitorActive = false;
+  let monitorActive = false, fileMonitor = null, wakeMonitor = null;
 
   try {
+    await stopTicketTests(ticket.id);
+    assertTicketActive(ticket.id);
     // Set up (or reuse) the ticket's worktree. In pooled mode this claims a
     // free slot; a full pool surfaces as a clean 409 rather than an
     // implementation failure.
     try {
       ({ worktreePath, branchName } = await worktrees.acquire(ticket));
+      assertTicketActive(ticket.id);
     } catch (err) {
       if (err.code === 'POOL_FULL') {
         db.updateTicketField(ticket.id, 'status', 'idle');
@@ -860,13 +943,16 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
     // File-change monitor (async — never blocks the event loop)
     const seenFiles = new Set();
     monitorActive = true;
-    (async () => {
+    fileMonitor = (async () => {
       while (monitorActive) {
-        await new Promise(r => setTimeout(r, 2000));
+        let timer;
+        await new Promise(resolve => { wakeMonitor = resolve; timer = setTimeout(resolve, 2000); });
+        clearTimeout(timer);
+        wakeMonitor = null;
         if (!monitorActive) break;
         try {
           const changed = await execAsync(`git diff --name-only`, worktreePath, 5000);
-          if (changed) {
+          if (changed && monitorActive && !ticketGone(ticket.id)) {
             changed.split('\n').forEach(f => {
               if (!seenFiles.has(f)) {
                 seenFiles.add(f);
@@ -946,14 +1032,17 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
       const testRunId = runTicketTests(ticket.id, 'auto');
       res.json({ error: err.message, test_run_id: testRunId, note: 'Changes auto-committed. Choose: continue (restart implementation) or review and cherry-pick.' });
     } else {
-      db.logActivity(ticket.id, 'implement_error', err.message);
       res.status(500).json({ error: err.message });
     }
+  } finally {
+    monitorActive = false;
+    wakeMonitor?.();
+    if (fileMonitor) await fileMonitor;
   }
-});
+}));
 
 // ── Stage 3: Review feedback ──────────────────────────────
-app.post('/api/tickets/:id/feedback', async (req, res) => {
+app.post('/api/tickets/:id/feedback', ticketOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review' && ticket.stage !== 'pr_opened') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
@@ -965,10 +1054,10 @@ app.post('/api/tickets/:id/feedback', async (req, res) => {
   db.logActivity(ticket.id, 'review_feedback', feedback.trim().slice(0, 300));
 
   res.json({ success: true, message: 'Ticket moved back to clarification', ticket: db.getTicket(ticket.id) });
-});
+}));
 
 // ── Rebase (standalone button in review stage) ────────────
-app.post('/api/tickets/:id/rebase', async (req, res) => {
+app.post('/api/tickets/:id/rebase', ticketOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (!['clarification', 'ready', 'review'].includes(ticket.stage)) return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
@@ -983,6 +1072,8 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
   sseBroadcast(ticket.id, 'stdout', { text: `Rebasing onto ${rebaseBranch}…` });
 
   try {
+    await stopTicketTests(ticket.id);
+    assertTicketActive(ticket.id);
     // Abort any stale in-progress rebase
     try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
 
@@ -1011,7 +1102,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
       const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
       db.logActivity(ticket.id, 'rebase_done', `Rebased onto ${rebaseBranch}: ${newSha.slice(0, 7)}`);
       db.updateTicketField(ticket.id, 'status', 'idle');
-      db.updateTicketField(ticket.id, 'commit_sha', newSha);
+      db.updateTicket(ticket.id, { commit_sha: newSha, base_sha: runGit(`rev-parse ${rebaseBase}`, ticket.worktree_path) });
       assertWorktreeClean(ticket, { stage: 'rebase' });
       sseBroadcast(ticket.id, 'stdout', { text: `Rebase complete: ${newSha.slice(0, 7)}` });
       return res.json({ success: true, commit_sha: newSha, ticket: db.getTicket(ticket.id) });
@@ -1063,6 +1154,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
           },
           cwd: ticket.worktree_path,
         });
+        assertTicketActive(ticket.id);
         const resolveOutput = resolveResult.text;
 
         // Check if conflicts remain
@@ -1087,7 +1179,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
             const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
             db.logActivity(ticket.id, 'rebase_done', `Coder resolved conflicts. Rebased onto ${ticket.base_branch || config.branchDefault}: ${newSha.slice(0, 7)}`);
             db.updateTicketField(ticket.id, 'status', 'idle');
-            db.updateTicketField(ticket.id, 'commit_sha', newSha);
+            db.updateTicket(ticket.id, { commit_sha: newSha, base_sha: runGit(`rev-parse ${rebaseBase}`, ticket.worktree_path) });
             assertWorktreeClean(ticket, { stage: 'rebase-resolved' });
             sseBroadcast(ticket.id, 'stdout', { text: `Rebase complete after conflict resolution: ${newSha.slice(0, 7)}` });
             return res.json({ success: true, commit_sha: newSha, note: 'Coder resolved conflicts', ticket: db.getTicket(ticket.id) });
@@ -1103,6 +1195,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
 
         db.logActivity(ticket.id, 'rebase_coder_unresolved', `Coder could not resolve conflicts in ${conflictFiles.length} files`);
         await generateConflictClarification(ticket, conflictFiles, gitStatus, resolveOutput);
+        assertTicketActive(ticket.id);
 
         const feedbackText = `The rebase onto ${ticket.base_branch || config.branchDefault} failed with conflicts in:\n${
           conflictFiles.join('\n') || '(unknown files)'
@@ -1116,12 +1209,14 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
           ticket: db.getTicket(ticket.id),
         });
       } catch (coderErr) {
+        assertTicketActive(ticket.id);
         // Coder itself crashed/errored — generate conflict clarification questions
         try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
         if (hadStash) popStashAndStage(ticket.worktree_path);
 
         db.logActivity(ticket.id, 'rebase_coder_error', coderErr.message.slice(0, 200));
         await generateConflictClarification(ticket, conflictFiles, gitStatus, null);
+        assertTicketActive(ticket.id);
 
         const feedbackText = `The rebase onto ${ticket.base_branch || config.branchDefault} failed with conflicts. The conflict resolver encountered an error:\n${coderErr.message}\n\nPlease answer the clarification questions to guide resolution.`;
         db.updateTicket(ticket.id, { stage: 'clarification', review_feedback: feedbackText, plan: null, status: 'idle' });
@@ -1134,14 +1229,15 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
       }
     }
   } catch (err) {
+    if (ticketGone(ticket.id)) return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
     db.logActivity(ticket.id, 'rebase_error', err.message.slice(0, 200));
     db.updateTicketField(ticket.id, 'status', 'idle');
     return res.status(500).json({ error: err.message, ticket: db.getTicket(ticket.id) });
   }
-});
+}));
 
 // ── Stage 4: Ready → cherry-pick + close ──────────────────
-app.post('/api/tickets/:id/ready', async (req, res) => {
+app.post('/api/tickets/:id/ready', ticketOperation(async (req, res) => {
   let ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage !== 'review') return res.status(400).json({ error: `Ticket is in ${ticket.stage} stage` });
@@ -1162,55 +1258,14 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
 
   let commitSha = null;
   try {
-    let hasChanges = false;
-    try { runGit(`diff --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
-    try { runGit(`diff --cached --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
+    db.updateTicketField(ticket.id, 'status', 'running');
+    await stopTicketTests(ticket.id);
+    assertTicketActive(ticket.id);
     const readyBaseBranch = ticket.base_branch || config.branchDefault;
-    // PR strategy only commits new worktree changes — pre-existing branch
-    // commits (from a prior run) are already on the branch and don't need
-    // a new commit.  Non-PR strategies need the branch-ahead check so the
-    // subsequent rebase/cherry-pick has something to apply.
-    if (!hasChanges && config.mergeStrategy !== 'pr') {
-      try {
-        const ahead = parseInt(runGit(`rev-list --count origin/${readyBaseBranch}..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
-        if (ahead > 0) hasChanges = true;
-      } catch {}
-    }
-
-    if (!hasChanges && config.mergeStrategy !== 'pr') {
-      const msg = `No uncommitted changes and no commits ahead of ${readyBaseBranch} on this branch.`;
-      db.logActivity(ticket.id, 'no_changes', msg);
-      return res.status(409).json({ error: msg, ticket: db.getTicket(ticket.id) });
-    }
-
-    // PR strategy: no new commit needed if worktree is clean — the coder's
-    // commits are already on the branch. Just push and create/update the PR.
-    if (config.mergeStrategy === 'pr' && !hasChanges) {
-      commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-    } else {
-      const commitMsg = `${ticket.id}: ${ticket.title}`;
-      runGit(`add -A`, ticket.worktree_path);
-
-      // PR strategy preserves branch history. Other strategies squash into
-      // a single commit for clean cherry-pick / merge.
-      if (config.mergeStrategy !== 'pr') {
-        const baseSha = ticket.base_sha;
-        if (baseSha) {
-          try {
-            runGit(`reset --soft ${baseSha}`, ticket.worktree_path);
-            db.logActivity(ticket.id, 'squashed', `All commits squashed to base ${baseSha.slice(0, 7)}`);
-          } catch {
-            db.logActivity(ticket.id, 'squash_skipped', 'Could not reset to recorded base, committing as-is');
-          }
-        } else {
-          db.logActivity(ticket.id, 'squash_skipped', 'No base_sha recorded — committing as-is');
-        }
-      }
-
-      runGit(`commit -m "${escShell(commitMsg)}"`, ticket.worktree_path);
-      commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-      db.logActivity(ticket.id, 'committed', commitSha);
-      assertWorktreeClean(ticket, { stage: 'cherry-pick' });
+    commitSha = prepareReadyCommit(ticket);
+    if (!commitSha) {
+      db.updateTicketField(ticket.id, 'status', 'idle');
+      return res.status(409).json({ error: `No changes ahead of ${readyBaseBranch}.`, ticket: db.getTicket(ticket.id) });
     }
 
     if (config.mergeStrategy === 'pr') {
@@ -1222,21 +1277,18 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
       // commit so the user can retry `ready`).
       db.updateTicket(ticket.id, { commit_sha: commitSha, status: 'running' });
       db.logActivity(ticket.id, 'pushing', `Pushing ${ticket.branch_name} and opening PR in the background…`);
-      pushAndOpenPr(ticket.id, ticket.branch_name, `${ticket.id}: ${ticket.title}`, ticket.worktree_path);
-      return res.json({ success: true, pending: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
+      res.json({ success: true, pending: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
+      await pushAndOpenPr(ticket.id, ticket.branch_name, `${ticket.id}: ${ticket.title}`, ticket.worktree_path);
+      return;
     } else {
       try {
-        runGit(`rebase ${readyBaseBranch}`, ticket.worktree_path);
+        const expectedBase = runGit(`rev-parse refs/heads/${readyBaseBranch}`, ticket.worktree_path);
+        runGit(`rebase ${expectedBase}`, ticket.worktree_path);
         commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
-        // Move the default-branch ref to the rebased commit via plumbing.
-        // `git update-ref` is a metadata operation: it rewrites the branch
-        // pointer without touching the main checkout's working tree — no
-        // checkout, no merge, no risk of clobbering the user's uncommitted
-        // local changes. If those changes ever need to be reconciled with
-        // the new branch state, that's a regular git reset/merge the user
-        // can do in their own time.
-        runGit(`update-ref refs/heads/${readyBaseBranch} ${commitSha}`);
+        db.updateTicket(ticket.id, { base_sha: expectedBase, commit_sha: commitSha });
+        integrateBranch(ticket.worktree_path, readyBaseBranch, expectedBase, commitSha);
       } catch (err) {
+        db.updateTicketField(ticket.id, 'status', 'idle');
         db.logActivity(ticket.id, 'rebase_failed', err.message);
         try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
         // Report rebase conflicts directly from the worktree (no main-checkout
@@ -1256,14 +1308,14 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
           ? `\nGit error: ${errorDetail}`
           : '';
         return res.status(409).json({
-          error: `Rebase failed against ${readyBaseBranch}.${fileList}${gitHint}\nResolve in worktree ${ticket.worktree_path}, then retry.`,
+          error: `Could not integrate into ${readyBaseBranch}.${fileList}${gitHint}\nPreserve or commit local changes, resolve any conflicts, then retry Ready. Ticket worktree: ${ticket.worktree_path}.`,
           ticket: db.getTicket(ticket.id)
         });
       }
       db.logActivity(ticket.id, 'cherry_picked', commitSha);
     }
 
-    db.updateTicket(ticket.id, { stage: 'done', commit_sha: commitSha });
+    db.updateTicket(ticket.id, { stage: 'done', status: 'idle', commit_sha: commitSha });
     await worktrees.release(ticket.id);
 
     res.json({ success: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
@@ -1271,55 +1323,55 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     const tail = commitSha
       ? ` Squashed commit ${commitSha.slice(0, 7)} is still on branch ${ticket.branch_name} in the worktree.`
       : '';
+    if (ticketGone(ticket.id)) return res.json({ closed: true, ticket: db.getTicket(ticket.id) });
+    db.updateTicketField(ticket.id, 'status', 'idle');
     db.logActivity(ticket.id, 'ready_error', `${err.message}${tail} Worktree preserved — ticket stays in review.`);
     res.status(500).json({ error: err.message, ticket: db.getTicket(ticket.id) });
   }
-});
+}));
 
 // ── Close ticket ──────────────────────────────────────────
 // Terminal action available in ANY stage — including while a stage is
 // running. Kills the active coder process (if any), releases the worktree /
 // pool slot and branch, then moves the ticket to the terminal 'done' stage.
 // An already-closed ticket cannot be closed again.
-app.post('/api/tickets/:id/close', async (req, res) => {
+app.post('/api/tickets/:id/close', terminalOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
   if (ticket.stage === 'done') {
     return res.status(400).json({ error: 'Ticket is already done' });
   }
 
-  // 1. Stop any in-flight coder process for this ticket.
-  const killed = killTicketProcess(ticket.id);
-
-  // 2. Mark terminal BEFORE releasing the worktree. A handler whose coder
-  //    process we just killed will resume in its catch block; seeing the
-  //    closed stage (via isClosed) it bails instead of reopening the ticket.
   db.updateTicket(ticket.id, { stage: 'done', status: 'idle', commit_sha: null });
+  const [killed] = await Promise.all([
+    cancelTicketOperation(ticket.id, ticket.coder_pgid), stopTicketTests(ticket.id),
+  ]);
 
-  // 3. Release the worktree / pool slot and branch (safe when there is none).
+  // Reclaim resources only after all owning operations have settled.
   await worktrees.release(ticket.id);
 
   db.logActivity(ticket.id, 'closed', killed ? 'closed (running process killed)' : 'closed');
   const updated = db.getTicket(ticket.id);
   sseBroadcast(ticket.id, 'ticket', updated);
   res.json({ success: true, ticket: updated });
-});
+}));
 
 // ── Delete ticket ─────────────────────────────────────────
-app.delete('/api/tickets/:id', async (req, res) => {
+app.delete('/api/tickets/:id', terminalOperation(async (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   // Stop any in-flight work (coder run or background push) before touching the
   // worktree, so we don't remove a path a `git push`/`gh` child is still using.
-  killTicketProcess(ticket.id);
+  db.updateTicket(ticket.id, { stage: 'done', status: 'idle' });
+  await Promise.all([cancelTicketOperation(ticket.id, ticket.coder_pgid), stopTicketTests(ticket.id)]);
 
   // Return a pooled slot to the pool, or remove a per-ticket worktree.
   await worktrees.release(ticket.id);
 
   db.deleteTicket(req.params.id);
   res.json({ success: true });
-});
+}));
 
 // ── Get diff ──────────────────────────────────────────────
 app.get('/api/tickets/:id/diff', (req, res) => {
@@ -1373,6 +1425,7 @@ app.get('/api/tickets/:id/tests', (req, res) => {
 app.post('/api/tickets/:id/tests/run', (req, res) => {
   const ticket = db.getTicket(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+  if (ticket.stage === 'done' || ticket.status === 'running') return res.status(409).json({ error: 'Ticket is closed or processing' });
   const runId = runTicketTests(req.params.id, 'manual');
   res.json({ run_id: runId, status: 'running' });
 });
@@ -1380,34 +1433,42 @@ app.post('/api/tickets/:id/tests/run', (req, res) => {
 // ── Top-level test runner (project root) ──────────────────
 const runResults = {};
 
+async function runLoggedProcess(runId, file, args, env) {
+  const out = fs.createWriteStream(runResults[runId].file);
+  let writeError;
+  out.on('error', err => { writeError = err; });
+  try {
+    const result = await runProcess(file, args, {
+      cwd: config.projectDir, env, timeoutMs: config.test.timeout,
+      onSpawn: proc => {
+        proc.stdout.pipe(out, { end: false });
+        proc.stderr.pipe(out, { end: false });
+      },
+    });
+    if (result.error) out.write(`\nError: ${result.error.message}`);
+    if (result.timedOut) out.write(`\nTimed out after ${config.test.timeout}ms`);
+    await new Promise(resolve => { if (out.destroyed) resolve(); else out.end(resolve); });
+    runResults[runId].status = result.exitCode === 0 && !result.error && !result.timedOut && !writeError ? 'pass' : 'fail';
+  } catch (err) {
+    out.destroy();
+    runResults[runId].status = 'fail';
+    console.error(`Test run ${runId} failed: ${err.message}`);
+  }
+}
+
 app.post('/api/test', (req, res) => {
   const runId = `${TEST_RUN_PREFIX}${Date.now()}`;
   const outFile = path.join(DATA_DIR, runId + '.log');
   runResults[runId] = { status: 'running', file: outFile };
   res.json({ runId });
 
-  const out = fs.createWriteStream(outFile);
-  let proc;
   if (config.test.commandOverride) {
-    proc = spawn('bash', ['-lc', config.test.commandOverride], {
-      cwd: config.projectDir,
-      timeout: config.test.timeout,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    runLoggedProcess(runId, 'bash', ['-lc', config.test.commandOverride]);
   } else {
-    const py = config.venvPython();
-    const testModule = `${config.projectName}.test`;
-    proc = spawn(py, ['-m', testModule], {
-      cwd: config.projectDir,
-      env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
-      timeout: config.test.timeout,
-      stdio: ['ignore', 'pipe', 'pipe'],
+    runLoggedProcess(runId, config.venvPython(), ['-m', `${config.projectName}.test`], {
+      ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath),
     });
   }
-  proc.stdout.pipe(out);
-  proc.stderr.pipe(out);
-  proc.on('close', code => { runResults[runId].status = code === 0 ? 'pass' : 'fail'; });
-  proc.on('error', err => { fs.appendFileSync(outFile, '\nError: ' + err.message); runResults[runId].status = 'fail'; });
 });
 
 app.get('/api/run/:id', (req, res) => {
@@ -1428,17 +1489,9 @@ app.post('/api/prepush', (req, res) => {
   runResults[runId] = { status: 'running', file: outFile };
   res.json({ runId });
 
-  const out = fs.createWriteStream(outFile);
-  const proc = spawn('bash', [hookPath], {
-    cwd: config.projectDir,
-    env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
-    timeout: config.test.timeout,
-    stdio: ['ignore', 'pipe', 'pipe'],
+  runLoggedProcess(runId, 'bash', [hookPath], {
+    ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath),
   });
-  proc.stdout.pipe(out);
-  proc.stderr.pipe(out);
-  proc.on('close', code => { runResults[runId].status = code === 0 ? 'pass' : 'fail'; });
-  proc.on('error', err => { fs.appendFileSync(outFile, '\nError: ' + err.message); runResults[runId].status = 'fail'; });
 });
 
 app.post('/api/restart', (req, res) => {
@@ -1475,7 +1528,9 @@ async function generateSuggestions(retries = 3) {
       );
 
       const fullPrompt = `${prompts.suggest}\n\nSuggest ${SUGGESTIONS_MAX} tickets.\n\nExplore the codebase in the project root, then read the context file at: ${contextFile}`;
-      const result = await runCoder(SUGGESTIONS_TICKET_ID, fullPrompt, { timeout: config.coder.timeouts.suggest, cwd: config.projectDir });
+      const result = await require('./coder').run(fullPrompt, {
+        title: `ticket-${SUGGESTIONS_TICKET_ID}`, timeout: config.coder.timeouts.suggest, cwd: config.projectDir,
+      });
       const output = result.text;
       const jsonMatch = output.match(/\{[\s\S]*\}/);
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -1525,7 +1580,8 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────────
-(async function recoverStuckTickets() {
+async function recoverStuckTickets() {
+  recoverInterruptedTestRuns();
   const ids = db.getTicketIds();
   let changed = false;
   for (const tid of ids) {
@@ -1577,7 +1633,7 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
       // Tickets running a coder session: kill orphaned process (if any)
       // by saved PGID, then re-attach to the managed session so the coder
       // picks up where it left off with full conversation context.
-      killTicketProcess(tid, t.coder_pgid, t.ocode_session);
+      await killTicketProcess(tid, t.coder_pgid, t.ocode_session);
       db.updateTicketField(tid, 'coder_pgid', null);
 
       if (t.ocode_session && t.stage === 'implementation') {
@@ -1585,7 +1641,7 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
         changed = true;
         console.log(`Recovered: ${tid} re-attaching to session ${t.ocode_session}`);
         const recCwd = t.worktree_path || config.projectDir;
-        (async () => {
+        runTicketOperation(tid, async () => {
           try {
             const prompt = 'The server was restarted while you were implementing this ticket. '
               + 'Your session is preserved and the worktree has your existing changes. '
@@ -1608,11 +1664,12 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
               await finishImplement(tid, t.worktree_path, recoveryResult.tokens);
             }
           } catch (err) {
+            if (ticketGone(tid)) return;
             db.logActivity(tid, 'recover_error', `Re-attach failed: ${err.message}`);
             db.updateTicketField(tid, 'status', 'idle');
             console.log(`Recovered: ${tid} re-attach failed — reset to idle`);
           }
-        })();
+        }).catch(err => console.log(`Recovery failed: ${err.message}`));
       } else {
         const reason = t.ocode_session
           ? `session exists but stage is ${t.stage} — not resumable`
@@ -1625,22 +1682,33 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
     }
   }
   if (changed) console.log('Crash recovery complete');
-})();
+}
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Jira Dashboard running on http://0.0.0.0:${PORT}`);
-  console.log(`   Project: ${config.projectDir} (${config.projectName})`);
-  console.log(`   Coder: ${config.coder.type} (${config.coder.bin})`);
-  console.log(`   Data: SQLite at ${path.join(DATA_DIR, 'store.db')}`);
-  _systemChecks = runMachineChecks(config);
-  for (const c of _systemChecks) {
-    if (c.status !== 'ok') console.log(`[machine-check] ${c.status}: ${c.name} — ${c.detail}`);
-  }
-  if (suggestions.length < SUGGESTIONS_MAX) generateSuggestions();
+async function startServer() {
+  await recoverStuckTickets();
+  return app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Jira Dashboard running on http://0.0.0.0:${PORT}`);
+    console.log(`   Project: ${config.projectDir} (${config.projectName})`);
+    console.log(`   Coder: ${config.coder.type} (${config.coder.bin})`);
+    console.log(`   Data: SQLite at ${path.join(DATA_DIR, 'store.db')}`);
+    _systemChecks = runMachineChecks(config);
+    for (const c of _systemChecks) {
+      if (c.status !== 'ok') console.log(`[machine-check] ${c.status}: ${c.name} — ${c.detail}`);
+    }
+    if (suggestions.length < SUGGESTIONS_MAX) generateSuggestions();
 
-  // Periodic PR checker — scans pr_opened tickets for new failures/reviews
-  _runClarify = (tid) => { try { return runClarify(tid); } catch {} };
-  const prChecker = startPrChecker(db, config, sseBroadcast, _runClarify);
-  _recheckTicket = prChecker.recheckTicket;
-  _startWatchingPr = prChecker.startWatching;
-});
+    // Periodic PR checker — scans pr_opened tickets for new failures/reviews
+    _runClarify = (tid) => runClarify(tid).catch(err => {
+      if (err.code !== 'TICKET_CANCELLED' && err.code !== 'TICKET_BUSY') console.log(`[clarify] ${tid}: ${err.message}`);
+    });
+    const prChecker = startPrChecker(db, config, sseBroadcast, _runClarify);
+    _recheckTicket = prChecker.recheckTicket;
+    _startWatchingPr = prChecker.startWatching;
+  });
+}
+
+if (require.main === module) {
+  startServer().catch(err => { console.error(`Startup failed: ${err.message}`); process.exitCode = 1; });
+}
+
+module.exports = { app, startServer, runClarify, finishImplement, generateSuggestions };

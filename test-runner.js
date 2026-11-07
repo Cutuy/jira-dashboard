@@ -1,7 +1,24 @@
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { runProcess } = require('./process-runner');
 const config = require('./config');
+
+const activeTests = new Map();
+const stoppingTickets = new Set();
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\"'\"'") + "'";
+}
+
+function pythonSourcePath(worktreePath) {
+  return (config.venv.pythonpath || 'src').split(path.delimiter).map(source => {
+    if (!path.isAbsolute(source)) return path.resolve(worktreePath, source);
+    const relative = path.relative(config.projectDir, source);
+    // A source path inside the main checkout refers to its worktree equivalent.
+    return relative !== '..' && !relative.startsWith('..' + path.sep)
+      ? path.resolve(worktreePath, relative) : source;
+  }).join(path.delimiter);
+}
 
 function detectTestFramework(worktreePath) {
   if (!worktreePath || !fs.existsSync(worktreePath)) return null;
@@ -38,15 +55,14 @@ function detectTestFramework(worktreePath) {
 
     if (isKnownProject) {
       const py = config.venvPython();
-      const envOverride = `PYTHONPATH=${path.join(config.projectDir, 'src')}`;
-      const cmd = config.test.commandOverride || `${envOverride} ${py} -m ${config.projectName}.test`;
+      const cmd = `${shellQuote(py)} -m ${shellQuote(config.projectName + '.test')}`;
       return { framework: 'pytest', command: cmd };
     }
   }
 
   if (has('pyproject.toml') || has('pytest.ini') || has('setup.py') || has('tests/') || has('test/')) {
     const py = config.venvPython();
-    return { framework: 'pytest', command: `${py} -m pytest -x --tb=short -q` };
+    return { framework: 'pytest', command: `${shellQuote(py)} -m pytest -x --tb=short -q` };
   }
 
   if (has('scripts/test.sh')) return { framework: 'shell', command: 'bash scripts/test.sh' };
@@ -55,41 +71,31 @@ function detectTestFramework(worktreePath) {
   return null;
 }
 
-function execTestCommand(command, cwd, timeoutMs) {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    let stdout = '';
-    let stderr = '';
-    let resolved = false;
-    const finish = (status, extra = {}) => {
-      if (resolved) return;
-      resolved = true;
-      resolve({
-        status,
-        exit_code: extra.exit_code ?? null,
-        output: (stdout + (stderr ? '\n--- stderr ---\n' + stderr : '')).slice(-64 * 1024),
-        duration_ms: Date.now() - start,
-      });
-    };
-
-    let proc;
-    try {
-      proc = spawn('bash', ['-lc', command], {
-        cwd,
-        env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
-        timeout: timeoutMs,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (err) {
-      return finish('error', { exit_code: -1, output: 'spawn error: ' + err.message });
-    }
-    proc.stdout.on('data', d => { stdout += d.toString(); });
-    proc.stderr.on('data', d => { stderr += d.toString(); });
-    proc.on('close', code => {
-      finish(code === 0 ? 'pass' : 'fail', { exit_code: code });
-    });
-    proc.on('error', err => finish('error', { exit_code: -1, output: 'proc error: ' + err.message }));
+async function execTestCommand(command, cwd, timeoutMs, opts = {}) {
+  const result = await runProcess('bash', ['-lc', command], {
+    cwd,
+    env: { ...process.env, PYTHONPATH: pythonSourcePath(cwd) },
+    timeoutMs,
+    signal: opts.signal,
+    // stdout + stderr fit the database's existing 64 KiB output contract,
+    // including diagnostic markers. Keep the tails during execution too.
+    maxStdoutBytes: 31 * 1024,
+    maxStderrBytes: 31 * 1024,
   });
+  const diagnostics = [];
+  if (result.error) diagnostics.push('process error: ' + result.error.message);
+  if (result.timedOut) diagnostics.push(`Tests timed out after ${timeoutMs}ms.`);
+  if (result.cancelled) diagnostics.push('Tests cancelled.');
+  if (result.stdoutTruncated) diagnostics.push('[stdout truncated; showing last 31744 bytes]');
+  if (result.stderrTruncated) diagnostics.push('[stderr truncated; showing last 31744 bytes]');
+  return {
+    status: result.error || result.timedOut || result.cancelled ? 'error'
+      : result.exitCode === 0 ? 'pass' : 'fail',
+    exit_code: result.exitCode,
+    output: [...diagnostics, result.stdout,
+      result.stderr ? '--- stderr ---\n' + result.stderr : ''].filter(Boolean).join('\n'),
+    duration_ms: result.durationMs,
+  };
 }
 
 function parseTestSummary(output) {
@@ -125,8 +131,11 @@ function runTicketTests(ticketId, triggeredBy = 'auto') {
   const db = require('./db');
   const { sseBroadcast } = require('./sse');
 
+  if (stoppingTickets.has(ticketId)) return null;
+  const existing = activeTests.get(ticketId);
+  if (existing) return existing.runId;
   const ticket = db.getTicket(ticketId);
-  if (!ticket) return null;
+  if (!ticket || ticket.stage === 'done') return null;
 
   if (triggeredBy === 'auto' && !config.test.enabled) return null;
 
@@ -156,23 +165,53 @@ function runTicketTests(ticketId, triggeredBy = 'auto') {
   const runId = db.createTestRun(ticketId, det.framework, det.command, triggeredBy);
   sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'running', framework: det.framework });
 
-  (async () => {
-    const result = await execTestCommand(det.command, wt, config.test.timeout);
-    const parsed = parseTestSummary(result.output);
-    const summary = formatSummary(parsed, result.status);
-    const row = db.finalizeTestRun(runId, { ...result, summary });
-    db.logActivity(ticketId, 'test_' + result.status,
-      `${det.framework}: ${summary} (${Math.round((result.duration_ms || 0) / 100) / 10}s)`);
-    sseBroadcast(ticketId, 'test_status', {
-      run_id: runId, status: row.status, framework: det.framework,
-      summary: row.summary, exit_code: row.exit_code, duration_ms: row.duration_ms,
-    });
-  })().catch(err => {
-    db.finalizeTestRun(runId, { status: 'error', output: 'runner crash: ' + err.message });
-    sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'error' });
-  });
+  const controller = new AbortController();
+  const active = { runId, controller, done: null };
+  activeTests.set(ticketId, active);
+  active.done = (async () => {
+    try {
+      const result = await execTestCommand(det.command, wt, config.test.timeout, { signal: controller.signal });
+      // Deletion cascades test rows. A completed deleted ticket has nothing left
+      // to persist or broadcast, and must not produce an unhandled rejection.
+      if (!db.getTicket(ticketId)) return;
+      const parsed = result.status === 'error' ? null : parseTestSummary(result.output);
+      const summary = controller.signal.aborted ? 'Tests cancelled'
+        : formatSummary(parsed, result.status);
+      const row = db.finalizeTestRun(runId, { ...result, summary });
+      if (!row) return;
+      db.logActivity(ticketId, 'test_' + result.status,
+        `${det.framework}: ${summary} (${Math.round((result.duration_ms || 0) / 100) / 10}s)`);
+      sseBroadcast(ticketId, 'test_status', {
+        run_id: runId, status: row.status, framework: det.framework,
+        summary: row.summary, exit_code: row.exit_code, duration_ms: row.duration_ms,
+      });
+    } catch (err) {
+      if (!db.getTicket(ticketId)) return;
+      const row = db.finalizeTestRun(runId, { status: 'error', output: 'runner crash: ' + err.message });
+      if (row) sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'error' });
+    } finally {
+      if (activeTests.get(ticketId) === active) activeTests.delete(ticketId);
+    }
+  })();
 
   return runId;
+}
+
+async function stopTicketTests(ticketId) {
+  stoppingTickets.add(ticketId);
+  try {
+    const active = activeTests.get(ticketId);
+    if (active) {
+      active.controller.abort();
+      await active.done;
+    }
+  } finally {
+    stoppingTickets.delete(ticketId);
+  }
+}
+
+function recoverInterruptedTestRuns() {
+  return require('./db').recoverInterruptedTestRuns();
 }
 
 function buildTestContextForPrompt(ticketId) {
@@ -207,5 +246,7 @@ module.exports = {
   parseTestSummary,
   formatSummary,
   runTicketTests,
+  stopTicketTests,
+  recoverInterruptedTestRuns,
   buildTestContextForPrompt,
 };

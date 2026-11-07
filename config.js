@@ -1,11 +1,11 @@
 // config.js — unified config loader
-// Discovers <projectDir>/.jira-dashboard/.env by walking up from cwd,
-// then loads config.json on top as override. All code imports from this
-// module; no other file reads env/paths directly.
+// Loads config.json defaults, then applies <projectDir>/.jira-dashboard/.env
+// overrides. Validate before dependent modules create resources or launch work.
 
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const Ajv = require('ajv');
 
 // ── Project root discovery ────────────────────────────────
 // Three strategies, in priority order:
@@ -48,6 +48,11 @@ if (fs.existsSync(configPath)) {
   console.warn('config.json not found — using defaults');
   cfg = {};
 }
+const validateConfig = new Ajv({ allErrors: true }).compile(require('./config.schema.json'));
+if (!validateConfig(cfg)) {
+  const details = validateConfig.errors.map(e => `${e.instancePath || '/'} ${e.message}`).join('; ');
+  throw new Error(`Invalid config.json: ${details}`);
+}
 
 // ── Resolve project directory ─────────────────────────────
 const explicitProjectPath = (cfg.project?.path && fs.existsSync(cfg.project?.path))
@@ -86,19 +91,34 @@ if (!fs.existsSync(dashEnvPath)) {
 // Project environment from <project>/.env — injected into process.env
 // so child processes (coder CLI, test runner) inherit API keys, venv, PATH, etc.
 const projectEnvPath = path.join(PROJECT_DIR, '.env');
-if (fs.existsSync(projectEnvPath)) {
-  Object.assign(process.env, loadEnv(projectEnvPath));
-}
+const projectEnv = loadEnv(projectEnvPath);
 
 // ── Helpers ───────────────────────────────────────────────
 function env(key, fallback) {
   return envVars[key] !== undefined ? envVars[key] : fallback;
 }
 
+function integerSetting(key, fallback, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
+  const raw = env(key);
+  const value = raw === undefined || raw === '' ? fallback : Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`Invalid ${key}: expected an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function checkPatterns(key, value) {
+  return value.split(',').map(s => s.trim()).filter(Boolean).map(pattern => {
+    try { new RegExp(`^${pattern}$`, 'i'); }
+    catch { throw new Error(`Invalid ${key} regular expression: ${pattern}`); }
+    return pattern;
+  });
+}
+
 // ── Resolved config ───────────────────────────────────────
 const config = {
   // Server
-  port: parseInt(env('PORT')) || cfg.port || 3006,
+  port: integerSetting('PORT', cfg.port ?? 3006, 1, 65535),
   get dataDir() {
     return path.resolve(env('JIRA_DATA_DIR') || path.join(this.projectDir, '.jira-dashboard'));
   },
@@ -112,7 +132,7 @@ const config = {
     repo: env('GITHUB_REPO') || cfg.explorer?.repo || '',
   },
   branchDefault: env('GIT_DEFAULT_BRANCH') || cfg.branchDefault || 'main',
-  dbBusyTimeout: parseInt(env('DB_BUSY_TIMEOUT')) || cfg.dbBusyTimeout || 5000,
+  dbBusyTimeout: integerSetting('DB_BUSY_TIMEOUT', cfg.dbBusyTimeout ?? 5000),
   projectDir: env('JIRA_PROJECT_DIR') || PROJECT_DIR,
 
   // Worktrees (defaults to <projectDir>/.worktrees if not set)
@@ -127,22 +147,21 @@ const config = {
   // parallelism at this count. 0 keeps the one-worktree-per-ticket behavior:
   // created on implement, deleted on close.
   get numWorktrees() {
-    const raw = env('NUM_WORKTREES') ?? cfg.worktrees?.count;
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) && n > 0 ? n : 0;
+    return integerSetting('NUM_WORKTREES', cfg.worktrees?.count ?? 0);
   },
 
   // Coder CLI tool
   coder: {
     type: env('JIRA_CODER_TYPE') || cfg.coder?.type || 'opencode',
     bin: env('JIRA_CODER_BIN') || cfg.coder?.bin || 'opencode',
-    timeouts: cfg.coder?.timeouts || {
+    timeouts: {
       clarify: 180_000,
       implement: 600_000,
       suggest: 120_000,
       test: 300_000,
       command: 30_000,
       push: 600_000,
+      ...cfg.coder?.timeouts,
     },
   },
 
@@ -159,21 +178,26 @@ const config = {
   // Never shown to any coder prompt. Typically process gates like automerge.
   prCheckIgnore: (() => {
     const raw = env('JIRA_PR_IGNORE_CHECKS') || cfg.pr_check?.ignore_checks || '';
-    return raw.split(',').map(s => s.trim()).filter(Boolean);
+    return checkPatterns('JIRA_PR_IGNORE_CHECKS / pr_check.ignore_checks', raw);
   })(),
   // PR checker: CI checks whose FAILURE triggers an auto-move to clarification
   // for code rework (comma-separated, case-insensitive).
   prReworkChecks: (() => {
     const raw = env('JIRA_PR_REWORK_CHECKS') || cfg.pr_check?.rework_checks || '';
-    return raw.split(',').map(s => s.trim()).filter(Boolean);
+    return checkPatterns('JIRA_PR_REWORK_CHECKS / pr_check.rework_checks', raw);
   })(),
 
 
   // Test runner (opt-in, default off)
   test: {
-    enabled: env('JIRA_TEST_ENABLED') === 'true' || cfg.test?.enabled || false,
+    enabled: (() => {
+      const raw = env('JIRA_TEST_ENABLED');
+      if (raw === undefined || raw === '') return cfg.test?.enabled ?? false;
+      if (raw !== 'true' && raw !== 'false') throw new Error('Invalid JIRA_TEST_ENABLED: expected true or false');
+      return raw === 'true';
+    })(),
     commandOverride: env('JIRA_TEST_CMD') || cfg.test?.command_override || null,
-    timeout: parseInt(env('JIRA_TEST_TIMEOUT')) || cfg.test?.timeout || 300_000,
+    timeout: integerSetting('JIRA_TEST_TIMEOUT', cfg.test?.timeout ?? 300_000),
   },
 
   // ── Convenience helpers ──────────────────────────────────
@@ -195,9 +219,19 @@ const config = {
   },
 };
 
+for (const [name, timeout] of Object.entries(config.coder.timeouts)) {
+  if (!Number.isSafeInteger(timeout) || timeout < 0) {
+    throw new Error(`Invalid coder.timeouts.${name}: expected a non-negative integer`);
+  }
+}
+// Resolve/validate lazy numeric settings before db/coder imports have effects.
+void config.numWorktrees;
+
 // Validate required paths
 if (!fs.existsSync(config.projectDir)) {
   console.warn(`WARNING: project dir not found: ${config.projectDir}`);
 }
+
+Object.assign(process.env, projectEnv);
 
 module.exports = config;

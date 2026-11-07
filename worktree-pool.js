@@ -128,10 +128,11 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
   return { created, kept, removed };
 }
 
-// Reset a pool worktree to a clean checkout of a fresh feature branch, ready
+// Reset a pool worktree to a clean checkout of a feature branch, ready
 // for a new ticket. Does NOT fetch — the remote-tracking ref from the previous
 // fetch (e.g. origin/develop) is used directly, even if slightly stale, because
 // a fetch on a large monorepo can timeout leaving the worktree in a bad state.
+// The manager may supply startRef to restore an explicitly fetched PR head.
 //
 // Strategy:
 //   1. hard-reset to the remote-tracking ref (rewrites working tree)
@@ -139,10 +140,10 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
 //   3. create/reset the feature branch at HEAD (metadata-only, no checkout)
 //   4. verify the worktree is clean — if reset was interrupted, fail fast
 //      rather than letting the coder's `git add -A` sweep in partial state.
-async function acquireSlot({ worktreePath, branchDefault, branchName, remote = 'origin' }) {
+async function acquireSlot({ worktreePath, branchDefault, branchName, remote = 'origin', startRef }) {
   clearIndexLock(worktreePath);
   try { git('rebase --abort 2>/dev/null', worktreePath); } catch { }
-  const base = freshDefaultBase({ cwd: worktreePath, branchDefault, remote });
+  const base = startRef || freshDefaultBase({ cwd: worktreePath, branchDefault, remote });
   const before = git('rev-parse --short HEAD', worktreePath);
   console.log(`[acquireSlot] ${branchName} base=${base} worktree=${worktreePath} HEAD-before=${before}`);
   try {
@@ -161,9 +162,8 @@ async function acquireSlot({ worktreePath, branchDefault, branchName, remote = '
     console.log(`[acquireSlot] DIRTY after checkout: ${status.slice(0, 200)}`);
     throw new Error(`Worktree not clean after checkout: ${status.slice(0, 200)}`);
   }
-  // Record the exact commit SHA that the feature branch was based on, so the
-  // ready handler can squash against this precise point rather than computing
-  // a merge-base against a potentially stale local ref at PR time.
+  // Return the resolved start commit. For a restored PR head the manager keeps
+  // the ticket's original branch point rather than using this head as its base.
   const baseSha = git('rev-parse HEAD', worktreePath);
   console.log(`[acquireSlot] done — clean base_sha=${baseSha}`);
   return { baseSha };
@@ -193,11 +193,9 @@ async function releaseSlot({ worktreePath, branchDefault, branchName }) {
   clearIndexLock(worktreePath);
   const before = (() => { try { return git('rev-parse --short HEAD', worktreePath); } catch { return '?'; } })();
   try { git('rebase --abort 2>/dev/null', worktreePath); } catch { }
-  try { git('reset --hard', worktreePath); } catch { }
-  try { git('clean -fd', worktreePath); } catch { }
-  try { await gitAsync(`checkout --detach ${branchDefault}`, worktreePath); } catch {
-    console.log(`[releaseSlot] checkout --detach ${branchDefault} FAILED (best-effort)`);
-  }
+  git('reset --hard', worktreePath);
+  git('clean -fd', worktreePath);
+  await gitAsync(`checkout --detach ${branchDefault}`, worktreePath);
   if (branchName) {
     try { git(`branch -D ${branchName}`, worktreePath); } catch { }
   }
