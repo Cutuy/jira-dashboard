@@ -10,8 +10,47 @@ separately so the initial findings remain reviewable.
 
 Branch: `fix/reliability-audit`, based on master
 `a459976978984a3af038db03a32a8e394eea66e3`.
-Initial PR contains this checklist. Implementation and regression tests follow
-after PR creation; findings F01–F11 are pending remediation.
+PR: [#33](https://github.com/Cutuy/jira-dashboard/pull/33), created with the
+checklist before implementation agents were spawned. Three agents implemented
+the persistence/worktree, ticket lifecycle/integration and coder/test execution
+fixes; integration also repairs configuration validation and CI coverage.
+
+| Finding | Remediation status | Regression evidence |
+| --- | --- | --- |
+| F01 | met: atomic database claims protect occupied slots through completed cleanup, including done/releasing tickets; failed cleanup retains its claim. | `tests/db.test.js`, real SQLite/Git `tests/worktree-manager.test.js`: concurrent acquisition, full pool, release race, cleanup failure and legacy duplicate ownership. |
+| F02 | met: checked-out target branches fast-forward through Git's index/worktree machinery; unchecked-out refs use compare-and-swap. Compatible WIP survives; conflicting WIP blocks integration. | `tests/server-lifecycle.test.js`: clean integration survives next commit; staged/unstaged edits survive; overlapping edits reject and retry. |
+| F03 | met: both allocation modes restore the exact saved feature head and reject missing remote state; pushes use an explicit expected-head lease. | Real bare remotes in `tests/worktree-manager.test.js` and `tests/server-lifecycle.test.js`, including unexpected remote changes. |
+| F04 | met: acquisition persists base_sha; Ready accepts agent commits, derives legacy missing bases, and prepares a squash without first rewinding the working tree. Branch drift is rejected before staging or moving a ref. | `tests/server-lifecycle.test.js`: committed implement → Ready, legacy null-base/local-only repository, conflict retry and branch-drift preservation. |
+| F05 | met: ticket operations own their full async lifetime; terminal actions cancel/await owners, tests and file monitoring before worktree release. Late completions cannot revive closed/deleted tickets. | Production handler tests: close during structured-output wait; duplicate implement during acquire; delete during execution; manual-test cancellation; deferred follow-up ownership. |
+| F06 | met: INSERT/UPDATE include base_branch and base_sha. | `tests/db.test.js`: create/update/unrelated update/null reset round trips. |
+| F07 | met: shared clarification failure persists clarify_error and restores idle when the run still owns a live ticket. | `tests/server-lifecycle.test.js`: automatic launch failure and cancellation paths. |
+| F08 | met: nonzero coder exits reject with code, stderr, partial structured output and session metadata. | `tests/coder-process.test.js`: real executable exit 1 and normal structured completion. |
+| F09 | met for timeout/graceful cancellation: shared execution terminates owned process groups and waits boundedly; one active test per ticket; close/Ready waits for tests; restart finalizes stale test rows. | `tests/process-runner.test.js`, `tests/test-runner.test.js`, `tests/server-lifecycle.test.js`: TERM-ignoring descendants, graceful exit-zero cancellation, manual close and project-level timeout. Abrupt-crash orphan identification remains limited as noted below. |
+| F10 | met: legacy migration binds current ticket fields and all question/activity arguments while preserving legacy defaults and timestamps. | `tests/db.test.js`: representative legacy and newer JSON records, Q&A/options, activity/stage, exact archived input. |
+| F11 | met: relative source paths and absolute paths inside the main checkout resolve to their tested-worktree equivalents; external absolute source paths stay external. | `tests/test-runner.test.js`: real Python import identity for direct and detected commands, including paths containing spaces/apostrophes. |
+
+Additional quality fixes: config.schema.json parses and is applied during config
+load; partial timeout overrides retain other stage limits; invalid numeric
+settings and check patterns fail before execution; explicit false test settings
+override JSON defaults. `npm test` discovers every backend test file, and CI runs
+client tests, lint and build in a separate job.
+
+Local integration: Node 24.18.0 with the current branch's locked dependencies;
+all 15 backend test files passed (`/tmp/jd-remediation-full-tests.log`), 17 client
+tests passed, client lint exited 0 with the 14 existing warnings, client build
+passed, and `git diff --check` passed. The final lifecycle suite covers 14 real
+handler scenarios, including branch drift and file-monitor settlement. The PR's
+final commit receives both CI jobs.
+
+Limits and follow-ups: native macOS/Windows and live coding-service behavior
+remain unverified. Restart recovery finalizes stale test rows but has no persisted
+test process identity to locate a process group left by an abrupt manual/server
+crash. Graceful cancellation and timeouts are covered. The frontend App/component
+cycle (O01), shared adapter usage counters/remaining synchronous Git paths (parts
+of O02), and PR review pagination/completeness (O05) are follow-up observations;
+this PR does not claim those broader refactors are complete. Coder stdout capture
+is bounded at 4 MiB and reports overflow as an explicit incomplete-result error;
+test output stays within the existing 64 KiB persisted-output contract.
 
 Source revision: `222f790cc153c205023f10fbe5358c43999acd50`. The three subsequent
 dependency PRs (#30–32) change only package lockfiles; source behavior is reviewed
@@ -30,7 +69,7 @@ or its accessible ancestors. Product requirements may be unspecified. README,
 CONTRIBUTING and docs are supporting behavioral evidence, not newly adopted
 requirements. No requirements file is created or modified.
 
-## Traceability
+## Initial audit traceability
 
 Each SE ID refers to the identically numbered item in the baseline above.
 Unverified means the available evidence cannot establish compliance; it does not
@@ -67,7 +106,7 @@ with their scope explained. Preferences retain their stated strength.
 | SE-026 | Documentation stays concise and explains behavior; plans record validation. | unmet | README is concise with architecture and setup links. Behavioral drift remains: F02 contradicts the implication that accepted work is safely applied; `freshDefaultBase` callers claim a fetch while implementation/tests intentionally do not fetch; no plan edits made. |
 | SE-027 | PRs lead with problem/behavior and concise validation. | unverified | No PR created/updated by this review; historical PR-writing compliance outside scope. |
 
-## Findings
+## Initial audit findings
 
 Five P1 findings and six P2 findings, all supported by focused reproductions.
 P1 means a normal supported workflow can lose work or block task completion.
@@ -217,7 +256,7 @@ worktree/src; the test command ran with cwd=worktree and printed `main checkout`
 Derive source paths from the tested worktree and verify source identity as part
 of an integration test.
 
-## Validation
+## Initial audit validation
 
 Environment: Linux arm64, temporary Node v24.18.0, satisfying the repository's
 >=24.18.0 <25 contract. Dependencies and source copied to
@@ -244,7 +283,7 @@ Reproduction scripts: `/tmp/jd-audit-repro.cjs` and
 `/tmp/jd-process-results.log`. Fixtures are disposable; the evidence summaries
 above remain in this persistent checklist.
 
-## Observations and unresolved scope
+## Initial audit observations and unresolved scope
 
 O01 — Frontend ownership: App.tsx is 1,980 lines and imports extracted sections,
 while those sections import Section/ResourceMetrics/TestReportPanel back from App.

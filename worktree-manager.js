@@ -50,8 +50,8 @@ function branchNameFor(ticketId) {
   return `feature/${safeId(ticketId)}`;
 }
 
-// Creating a per-ticket worktree writes a full working tree and, after the
-// upstream fetch, may check out a tip far ahead of local state — as costly as
+// Creating a per-ticket worktree writes a full working tree and may check out
+// a remote-tracking tip far ahead of local state — as costly as
 // the pool's initial `worktree add`. Give that one call the same generous
 // ceiling the pool uses (worktree-pool ADD_TIMEOUT) rather than the 30s command
 // default, or a big monorepo checkout hits ETIMEDOUT.
@@ -77,31 +77,63 @@ function ensureWorktreesDir() {
   }
 }
 
+// Pool reset/checkout yields to the event loop. Keep a ticket's acquire and
+// release ordered so a late release cannot erase a subsequent acquisition.
+const ticketOperations = new Map();
+function withTicketOperation(ticketId, operation) {
+  const previous = ticketOperations.get(ticketId) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  ticketOperations.set(ticketId, current);
+  return current.finally(() => {
+    if (ticketOperations.get(ticketId) === current) ticketOperations.delete(ticketId);
+  });
+}
+
+function acquisitionBase(ticket, branchName) {
+  const branchDefault = ticket.base_branch || config.branchDefault;
+  const defaultRef = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault });
+  if (!ticket.branch_name) {
+    const baseSha = git(`rev-parse ${defaultRef}^{commit}`);
+    return { startRef: baseSha, baseSha };
+  }
+
+  // A released ticket retains its branch name after opening a PR. Restore
+  // that exact remote branch, in both allocation modes. A failed fetch must
+  // stop rework before a fresh default-based branch can replace its contents.
+  try {
+    git(`fetch origin +refs/heads/${branchName}:refs/remotes/origin/${branchName}`,
+      config.projectDir, FETCH_TIMEOUT);
+    const startRef = git(`rev-parse origin/${branchName}^{commit}`);
+    const baseSha = ticket.base_sha || git(`merge-base ${defaultRef} ${startRef}`);
+    return { startRef, baseSha };
+  } catch (error) {
+    throw new Error(`Cannot restore existing feature branch ${branchName}: ${error.message}`);
+  }
+}
+
 // Claim a free pool slot for a ticket and check out its feature branch.
 // Returns { worktreePath, branchName } or null when every slot is in use.
 async function acquirePoolSlot(ticket, branchName) {
-  const claimed = new Set(
-    db.getAllTickets()
-      .filter((t) => t.id !== ticket.id && t.worktree_path && t.stage !== 'done')
-      .map((t) => path.resolve(t.worktree_path))
-  );
+  let preparationError;
   for (const wt of pool.poolPaths(config.worktreesDir, config.numWorktrees)) {
-    if (claimed.has(path.resolve(wt))) continue;   // held by another ticket
     if (!pool.isValidWorktree(wt)) continue;        // not provisioned — skip
-
-    // Claim the slot in the DB *before* the async git operations, so a
-    // concurrent acquire() call sees this write immediately (better-sqlite3
-    // is synchronous) and skips the slot.  Without this early claim a second
-    // call racing on the same DB snapshot would both see the slot as free.
-    db.updateTicketField(ticket.id, 'worktree_path', wt);
+    if (!db.claimWorktree(ticket.id, wt)) continue;
 
     let baseSha;
     const branchDefault = ticket.base_branch || config.branchDefault;
     try {
-      ({ baseSha } = await pool.acquireSlot({ worktreePath: wt, branchDefault, branchName }));
+      const base = acquisitionBase(ticket, branchName);
+      await pool.acquireSlot({ worktreePath: wt, branchDefault, branchName, startRef: base.startRef });
+      baseSha = base.baseSha;
     } catch (e) {
-      // Rollback the claim on failure so the slot isn't leaked
-      db.updateTicketField(ticket.id, 'worktree_path', null);
+      preparationError = e;
+      // Keep the reservation if cleanup fails: an unreset slot is not free.
+      try {
+        await pool.releaseSlot({ worktreePath: wt, branchDefault, branchName });
+        db.releaseWorktree(ticket.id, wt);
+      } catch (cleanupError) {
+        db.logActivity(ticket.id, 'cleanup_warn', cleanupError.message.slice(0, 500));
+      }
       console.log(`[acquirePoolSlot] ${ticket.id} slot ${wt} FAILED: ${e.message}`);
       db.logActivity(ticket.id, 'worktree_acquire_warn',
         `slot ${wt} failed to prep: ${e.message.slice(0, 500)}`);
@@ -109,6 +141,7 @@ async function acquirePoolSlot(ticket, branchName) {
     }
     return { worktreePath: wt, branchName, baseSha };
   }
+  if (preparationError) throw preparationError;
   return null;
 }
 
@@ -116,9 +149,14 @@ async function acquirePoolSlot(ticket, branchName) {
 // Returns { worktreePath, branchName }. Throws PoolFullError in pooled mode
 // when no slot is free.
 async function acquire(ticket) {
+  return withTicketOperation(ticket.id, () => acquireTicket(db.getTicket(ticket.id) || ticket));
+}
+
+async function acquireTicket(ticket) {
   ensureWorktreesDir();
-  const branchName = branchNameFor(ticket.id);
+  const branchName = ticket.branch_name || branchNameFor(ticket.id);
   let worktreePath;
+  let baseSha = ticket.base_sha;
 
   if (isPoolMode()) {
     // Reuse this ticket's slot if it still holds one (e.g. a review →
@@ -126,39 +164,28 @@ async function acquire(ticket) {
     // how many tickets can be in flight at once.
     if (pool.isValidWorktree(ticket.worktree_path) && ticket.branch_name) {
       worktreePath = ticket.worktree_path;
+      if (!db.claimWorktree(ticket.id, worktreePath)) throw new Error('Worktree is owned by another ticket');
       console.log(`[acquire] ${ticket.id} reusing existing worktree ${worktreePath} branch=${ticket.branch_name}`);
       // Ensure the worktree is on the expected branch — it may have drifted
       // (e.g. the slot was re-assigned to another ticket, or a manual git
       // checkout changed branches). Use plain checkout (no -B) to preserve
       // existing commits on the branch.
-      try {
-        git(`checkout ${ticket.branch_name}`, worktreePath);
-      } catch {
-        git(`checkout -b ${ticket.branch_name}`, worktreePath);
-      }
+      git(`checkout ${ticket.branch_name}`, worktreePath);
     } else {
+      if (ticket.worktree_path && !pool.isValidWorktree(ticket.worktree_path)) {
+        db.releaseWorktree(ticket.id, ticket.worktree_path);
+      }
       console.log(`[acquire] ${ticket.id} acquiring new pool slot...`);
       const slot = await acquirePoolSlot(ticket, branchName);
       if (!slot) throw new PoolFullError(config.numWorktrees);
       worktreePath = slot.worktreePath;
       db.logActivity(ticket.id, 'worktree_acquired', worktreePath);
       console.log(`[acquire] ${ticket.id} acquired ${worktreePath} base_sha=${slot.baseSha}`);
-      // If the ticket already has a branch on origin (from a previous push),
-      // switch this worktree to that branch instead of the fresh default-base one.
-      if (ticket.branch_name) {
-        try {
-          git(`fetch origin ${ticket.branch_name}`, config.projectDir, FETCH_TIMEOUT);
-          git(`checkout -B ${ticket.branch_name} origin/${ticket.branch_name}`, worktreePath);
-          console.log(`[acquire] ${ticket.id} checked out existing branch ${ticket.branch_name}`);
-        } catch (e) {
-          console.log(`[acquire] ${ticket.id} could not fetch existing branch ${ticket.branch_name}: ${e.message}`);
-        }
-      }
       // Persist the base SHA at acquire time so the ready handler can squash
       // against the exact origin/<default> commit that was used as the branch
       // point, rather than computing a merge-base against a potentially stale
       // local ref at PR time.
-      db.updateTicketField(ticket.id, 'base_sha', slot.baseSha);
+      baseSha = slot.baseSha;
     }
   } else {
     // Per-ticket mode: one throwaway worktree per ticket, deleted on close.
@@ -171,6 +198,9 @@ async function acquire(ticket) {
     console.log(`[implement] ${ticket.id} dirHere=${dirHere} tracked=${tracked} path=${worktreePath}`);
 
     if (!(dirHere && tracked)) {
+      // Resolve saved PR state before deleting stale local state. Fetch errors
+      // leave the ticket unchanged and visible as an acquisition failure.
+      const base = acquisitionBase(ticket, branchName);
       // Clean up any orphan directory (left over from a crashed previous run)
       // so `git worktree add` can create a fresh linked worktree.
       if (dirHere) fs.rmSync(worktreePath, { recursive: true, force: true });
@@ -180,42 +210,49 @@ async function acquire(ticket) {
 
       // Create the worktree with a fresh branch off the default branch in one
       // step. This NEVER touches the main checkout's working tree — it's a
-      // metadata operation that writes a new branch ref and worktree dir. Base
-      // off the freshly-fetched upstream tip, not the stale local ref, so a new
-      // ticket doesn't start weeks behind origin (see pool.freshDefaultBase).
-      const ticketBranchDefault = ticket.base_branch || config.branchDefault;
-      const base = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault: ticketBranchDefault });
-      git(`worktree add -b ${branchName} ${worktreePath} ${base}`, undefined, WORKTREE_ADD_TIMEOUT);
+      // metadata operation that writes a new branch ref and worktree dir. Use
+      // the existing remote-tracking default ref when present; acquisitionBase
+      // explicitly fetches only when restoring a previously pushed PR branch.
+      git(`worktree add -b ${branchName} ${worktreePath} ${base.startRef}`, undefined, WORKTREE_ADD_TIMEOUT);
+      baseSha = base.baseSha;
     }
   }
 
-  db.updateTicket(ticket.id, { worktree_path: worktreePath, branch_name: branchName });
+  if (!baseSha) {
+    const base = pool.freshDefaultBase({ cwd: worktreePath, branchDefault: ticket.base_branch || config.branchDefault });
+    baseSha = git(`merge-base HEAD ${base}`, worktreePath);
+  }
+  db.updateTicket(ticket.id, { worktree_path: worktreePath, branch_name: branchName, base_sha: baseSha });
   db.logActivity(ticket.id, 'worktree_created', worktreePath);
   return { worktreePath, branchName };
 }
 
-// Resolve the freshest base ref to rebase/branch a ticket against, refreshing
-// from the remote first. Thin wrapper over pool.freshDefaultBase that supplies
-// the configured default branch, so server.js gets the current origin tip
-// (e.g. origin/develop) without reaching into the pool or repeating the
-// fetch/fallback logic. See worktree-pool.freshDefaultBase for the rationale.
+// Resolve the existing remote-tracking default ref, falling back to the local
+// branch. This wrapper supplies configuration and does not fetch; see
+// worktree-pool.freshDefaultBase for the rationale.
 function freshDefaultBase(cwd, baseBranch) {
   return pool.freshDefaultBase({ cwd, branchDefault: baseBranch || config.branchDefault });
 }
 
 // Detach a ticket from its worktree when it closes or is deleted. Pooled slots
 // are reset and returned to the pool (never removed); per-ticket worktrees are
-// removed along with their branch. Idempotent and best-effort.
+// removed along with their branch. A pool slot remains reserved if reset or
+// detach fails, so another ticket cannot acquire an incompletely cleaned slot.
 async function release(ticketId) {
+  return withTicketOperation(ticketId, () => releaseTicket(ticketId));
+}
+
+async function releaseTicket(ticketId) {
   const t = db.getTicket(ticketId);
   if (!t) return;
   const wt = t.worktree_path;
   const bn = t.branch_name;
 
   if (isPoolMode() && isPoolWorktree(wt)) {
+    if (!db.claimWorktree(ticketId, wt)) throw new Error('Worktree has conflicting ticket owners; refusing cleanup');
     const branchDefault = t.base_branch || config.branchDefault;
     await pool.releaseSlot({ worktreePath: wt, branchDefault, branchName: bn });
-    db.updateTicket(ticketId, { worktree_path: null });
+    db.releaseWorktree(ticketId, wt);
     db.logActivity(ticketId, 'worktree_released', wt || '(none)');
     return;
   }
@@ -232,7 +269,7 @@ async function release(ticketId) {
     try { fs.rmSync(wt, { recursive: true, force: true }); }
     catch (e) { db.logActivity(ticketId, 'cleanup_warn', `rm worktree dir failed (non-fatal): ${e.message}`); }
   }
-  db.updateTicket(ticketId, { worktree_path: null });
+  if (wt) db.releaseWorktree(ticketId, wt);
 }
 
 module.exports = {

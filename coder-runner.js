@@ -1,101 +1,153 @@
+const { AsyncLocalStorage } = require('async_hooks');
 const config = require('./config');
 const coder = require('./coder');
 const db = require('./db');
+const { terminateProcess } = require('./process-runner');
 
 const runningProcs = new Map();
+const activeRuns = new Map();
+const runContext = new AsyncLocalStorage();
 
-function killTicketProcess(ticketId, pgid, sessionId) {
-  // Try in-memory map first (normal case, server alive)
+function cancellationError() {
+  const err = new Error('Ticket operation was cancelled');
+  err.code = 'TICKET_CANCELLED';
+  return err;
+}
+
+function ticketGone(ticketId) {
+  const ticket = db.getTicket(ticketId);
+  const run = runContext.getStore();
+  return !ticket || ticket.stage === 'done' ||
+    (run?.ticketId === ticketId && (run.controller.signal.aborted || activeRuns.get(ticketId) !== run));
+}
+
+function assertTicketActive(ticketId) {
+  if (ticketGone(ticketId)) throw cancellationError();
+}
+
+// Reserve the ticket before any await (including worktree acquisition), and keep
+// ownership until output parsing and all workflow continuations have settled.
+async function runTicketOperation(ticketId, fn) {
+  const parent = runContext.getStore();
+  if (parent?.ticketId === ticketId && activeRuns.get(ticketId) === parent) {
+    assertTicketActive(ticketId);
+    return fn(parent);
+  }
+  if (activeRuns.has(ticketId)) {
+    const err = new Error('Already processing, wait for completion');
+    err.code = 'TICKET_BUSY';
+    throw err;
+  }
+  let settle;
+  const run = { ticketId, controller: new AbortController(), done: new Promise(resolve => { settle = resolve; }) };
+  activeRuns.set(ticketId, run);
+  try {
+    return await runContext.run(run, () => fn(run));
+  } finally {
+    if (activeRuns.get(ticketId) === run) activeRuns.delete(ticketId);
+    settle();
+  }
+}
+
+async function killTicketProcess(ticketId, pgid, sessionId) {
   const proc = runningProcs.get(ticketId);
-  if (proc && proc.pid != null) {
-    runningProcs.delete(ticketId);
-    const pid = proc.pid;
-    const signal = (sig) => {
-      try { process.kill(-pid, sig); }
-      catch { try { proc.kill(sig); } catch {} }
-    };
-    signal('SIGTERM');
-    const t = setTimeout(() => signal('SIGKILL'), 2000);
-    if (typeof t.unref === 'function') t.unref();
+  if (proc) {
+    await terminateProcess(proc);
     return true;
   }
-  // Post-restart: kill orphaned process group by saved PGID
   if (pgid) {
     try { process.kill(-pgid, 'SIGTERM'); } catch {}
-    const t = setTimeout(() => { try { process.kill(-pgid, 'SIGKILL'); } catch {} }, 2000);
-    if (typeof t.unref === 'function') t.unref();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    try { process.kill(-pgid, 'SIGKILL'); } catch {}
     return true;
   }
-  // Fallback: find and kill orphans by session ID (tickets created before coder_pgid was tracked)
   if (sessionId) {
+    // Session IDs are data, never shell syntax. Exclude our own process.
+    const { execFileSync } = require('child_process');
     try {
-      const { execSync } = require('child_process');
-      const pids = execSync(`pgrep -f "${sessionId}"`, { encoding: 'utf-8', timeout: 5000 }).trim().split('\n').filter(Boolean);
-      for (const pid of pids) {
-        const n = parseInt(pid, 10);
-        if (n) {
-          try { process.kill(-n, 'SIGTERM'); } catch {}
-          setTimeout(() => { try { process.kill(-n, 'SIGKILL'); } catch {} }, 2000).unref();
-        }
-      }
-      if (pids.length) return true;
+      const pids = execFileSync('pgrep', ['-f', '--', sessionId], { encoding: 'utf-8', timeout: 5000 })
+        .trim().split('\n').map(Number).filter(n => n && n !== process.pid);
+      for (const n of pids) { try { process.kill(-n, 'SIGTERM'); } catch {} }
+      await new Promise(resolve => setTimeout(resolve, 250));
+      for (const n of pids) { try { process.kill(-n, 'SIGKILL'); } catch {} }
+      return pids.length > 0;
     } catch {}
   }
   return false;
 }
 
-function isClosed(ticketId) {
-  const stage = db.getTicket(ticketId)?.stage;
-  return stage === 'done' || stage === 'pr_opened';
+async function cancelTicketOperation(ticketId, pgid, sessionId) {
+  const run = activeRuns.get(ticketId);
+  run?.controller.abort();
+  const killed = await killTicketProcess(ticketId, pgid, sessionId);
+  if (run) await run.done;
+  return killed;
 }
 
-function ticketGone(ticketId) {
-  const t = db.getTicket(ticketId);
-  return !t || t.stage === 'done';
+function isClosed(ticketId) {
+  return ticketGone(ticketId) || db.getTicket(ticketId)?.stage === 'pr_opened';
 }
 
 async function runCoder(ticketId, prompt, opts = {}) {
+  const run = runContext.getStore();
+  if (!run || run.ticketId !== ticketId) {
+    return runTicketOperation(ticketId, () => runCoder(ticketId, prompt, opts));
+  }
+  assertTicketActive(ticketId);
   const ticket = db.getTicket(ticketId);
+  let proc;
   try {
     const result = await coder.run(prompt, {
       sessionId: ticket?.ocode_session,
       title: `ticket-${ticketId}`,
-      timeout: opts.timeout || config.coder.timeouts.clarify,
-      onProgress: opts.onProgress,
+      timeout: opts.timeout ?? config.coder.timeouts.clarify,
+      signal: run.controller.signal,
+      onProgress: line => { if (!ticketGone(ticketId)) opts.onProgress?.(line); },
       cwd: opts.cwd,
-      onSpawn: (proc) => {
-        runningProcs.set(ticketId, proc);
-        if (proc.pid) db.updateTicketField(ticketId, 'coder_pgid', proc.pid);
+      onSpawn: child => {
+        proc = child;
+        runningProcs.set(ticketId, child);
+        if (child.pid && !ticketGone(ticketId)) db.updateTicketField(ticketId, 'coder_pgid', child.pid);
       },
     });
-    if (result.sessionId) {
-      db.updateTicketField(ticketId, 'ocode_session', result.sessionId);
-    }
+    assertTicketActive(ticketId);
+    if (result.sessionId) db.updateTicketField(ticketId, 'ocode_session', result.sessionId);
     return result;
+  } catch (err) {
+    if (!ticketGone(ticketId) && err.partialResult) {
+      const partial = err.partialResult;
+      if (partial.sessionId) db.updateTicketField(ticketId, 'ocode_session', partial.sessionId);
+      db.logActivity(ticketId, 'coder_partial', JSON.stringify({
+        exit_code: err.exitCode, signal: err.signal, timed_out: !!err.timedOut,
+        stdout_truncated: !!err.stdoutTruncated, stderr_truncated: !!err.stderrTruncated,
+        text: (partial.text || err.stdout || '').slice(-4000), stderr: (err.stderr || '').slice(-2000),
+      }));
+    }
+    throw err;
   } finally {
-    runningProcs.delete(ticketId);
+    if (runningProcs.get(ticketId) === proc) runningProcs.delete(ticketId);
+    if (!ticketGone(ticketId)) db.updateTicketField(ticketId, 'coder_pgid', null);
   }
 }
 
 function captureSessionId(ticketId, sessionId) {
-  if (sessionId) {
-    db.updateTicketField(ticketId, 'ocode_session', sessionId);
-    return sessionId;
-  }
-  const coderMod = require('./coder');
-  const sid = coderMod.getLastSessionId();
-  if (sid) {
-    db.updateTicketField(ticketId, 'ocode_session', sid);
-    return sid;
-  }
-  return null;
+  if (ticketGone(ticketId)) return null;
+  const sid = sessionId;
+  if (sid) db.updateTicketField(ticketId, 'ocode_session', sid);
+  return sid || null;
+}
+
+function waitForTicket(ticketId, ms) {
+  const signal = runContext.getStore()?.controller.signal;
+  assertTicketActive(ticketId);
+  return new Promise((resolve, reject) => {
+    const cancel = () => { clearTimeout(timer); reject(cancellationError()); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve(); }, ms);
+    signal?.addEventListener('abort', cancel, { once: true });
+  });
 }
 
 module.exports = {
-  runningProcs,
-  killTicketProcess,
-  isClosed,
-  ticketGone,
-  runCoder,
-  captureSessionId,
+  runningProcs, killTicketProcess, cancelTicketOperation, runTicketOperation,
+  assertTicketActive, waitForTicket, isClosed, ticketGone, runCoder, captureSessionId,
 };

@@ -41,7 +41,7 @@ git clone https://github.com/Cutuy/jira-dashboard.git
 cd jira-dashboard
 npm install
 (cd client && npm install)
-npm test                  # runs all 4 test suites
+npm test                  # runs every backend *.test.js file
 ```
 
 To run the dashboard against your own project:
@@ -103,6 +103,7 @@ The project follows these conventions in existing history.
 - One concern per PR. If you find three things to fix, open three PRs.
 - Reference the issue it closes: `Closes #42`
 - Tests if the change is non-trivial. `npm test` must pass.
+- Client changes also require `cd client && npm test && npm run lint && npm run build`.
 - Update docs (`README.md`, `docs/`) if behavior changes.
 
 ## Release cadence

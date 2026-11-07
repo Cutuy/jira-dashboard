@@ -116,13 +116,29 @@ const stmts = {
   listTickets: db.prepare(`SELECT id, title, stage, status, updated_at, created_at FROM tickets ORDER BY updated_at DESC`),
   getAllTickets: db.prepare(`SELECT * FROM tickets ORDER BY updated_at DESC`),
   getAllTicketIds: db.prepare(`SELECT id FROM tickets`),
+  // A worktree stays reserved until cleanup completes, including after its
+  // ticket reaches done. Admission and reservation are one SQLite statement,
+  // so concurrent connections cannot both claim the same path.
+  claimWorktree: db.prepare(`
+    UPDATE tickets SET worktree_path = @worktree_path, updated_at = @updated_at
+    WHERE id = @id
+      AND (worktree_path IS NULL OR worktree_path = @worktree_path)
+      AND NOT EXISTS (
+        SELECT 1 FROM tickets AS owner
+        WHERE owner.id != @id AND owner.worktree_path = @worktree_path
+      )
+  `),
+  releaseWorktree: db.prepare(`
+    UPDATE tickets SET worktree_path = NULL, updated_at = ?
+    WHERE id = ? AND worktree_path = ?
+  `),
   insertTicket: db.prepare(`
     INSERT INTO tickets (id, title, content, stage, plan, worktree_path,
-      branch_name, commit_sha, pr_url, review_feedback, status, ocode_session,
+      branch_name, base_branch, base_sha, commit_sha, pr_url, review_feedback, status, ocode_session,
       total_cpu, total_elapsed, token_cost, token_input, token_output,
       estimated_complexity, plan_notes, coder_pgid, pr_rework_needed, pr_touched_checks, created_at, updated_at)
     VALUES (@id, @title, @content, @stage, @plan, @worktree_path,
-      @branch_name, @commit_sha, @pr_url, @review_feedback, @status, @ocode_session,
+      @branch_name, @base_branch, @base_sha, @commit_sha, @pr_url, @review_feedback, @status, @ocode_session,
       @total_cpu, @total_elapsed, @token_cost, @token_input, @token_output,
       @estimated_complexity, @plan_notes, @coder_pgid, @pr_rework_needed, @pr_touched_checks, @created_at, @updated_at)
   `),
@@ -130,6 +146,7 @@ const stmts = {
     UPDATE tickets SET
       title = @title, content = @content, stage = @stage, plan = @plan,
       worktree_path = @worktree_path, branch_name = @branch_name,
+      base_branch = @base_branch, base_sha = @base_sha,
       commit_sha = @commit_sha, pr_url = @pr_url, review_feedback = @review_feedback,
       status = @status, ocode_session = @ocode_session,
       total_cpu = @total_cpu, total_elapsed = @total_elapsed,
@@ -251,7 +268,7 @@ function getAllTickets() {
   return tickets;
 }
 
-function createTicket(data) {
+function ticketRecord(data) {
   const defaults = {
     stage: 'clarification',
     status: 'idle',
@@ -274,8 +291,13 @@ function createTicket(data) {
     pr_rework_needed: 0,
     pr_touched_checks: null,
     base_branch: null,
+    base_sha: null,
   };
-  const t = { ...defaults, ...data };
+  return { ...defaults, ...data };
+}
+
+function createTicket(data) {
+  const t = ticketRecord(data);
   stmts.insertTicket.run(t);
   logActivity(t.id, 'created', t.title);
   return getTicket(t.id);
@@ -292,6 +314,16 @@ function updateTicket(id, fields) {
 function updateTicketField(id, field, value) {
   const now = new Date().toISOString();
   getUpdateFieldStmt(field).run(value, now, id);
+}
+
+function claimWorktree(id, worktreePath) {
+  return stmts.claimWorktree.run({
+    id, worktree_path: path.resolve(worktreePath), updated_at: new Date().toISOString(),
+  }).changes === 1;
+}
+
+function releaseWorktree(id, worktreePath) {
+  return stmts.releaseWorktree.run(new Date().toISOString(), id, path.resolve(worktreePath)).changes === 1;
 }
 
 function deleteTicket(id) {
@@ -376,6 +408,16 @@ function getLatestTestRun(ticketId) {
 function getTestRuns(ticketId, limit = 20) {
   const capped = Math.max(1, Math.min(100, limit | 0));
   return stmts.getTestRunsLimited.all(ticketId, capped);
+}
+
+function recoverInterruptedTestRuns() {
+  return db.prepare(`
+    UPDATE test_runs SET status = 'error',
+      summary = 'Test run interrupted by server restart',
+      output = output || '\n[Test run interrupted by server restart]',
+      finished_at = ?
+    WHERE status = 'running'
+  `).run(new Date().toISOString()).changes;
 }
 
 function close() {
@@ -518,7 +560,7 @@ function migrateFromJSON() {
 
   const migrateAll = db.transaction(() => {
     for (const [tid, t] of Object.entries(data.tickets)) {
-      stmts.insertTicket.run({
+      stmts.insertTicket.run(ticketRecord({
         id: tid,
         title: t.title || '',
         content: t.content || '',
@@ -528,7 +570,10 @@ function migrateFromJSON() {
         plan_notes: t.plan_notes || null,
         worktree_path: t.worktree_path || null,
         branch_name: t.branch_name || null,
+        base_branch: t.base_branch || null,
+        base_sha: t.base_sha || null,
         commit_sha: t.commit_sha || null,
+        pr_url: t.pr_url || null,
         review_feedback: t.review_feedback || null,
         status: t.status || 'idle',
         ocode_session: t.ocode_session || null,
@@ -538,20 +583,25 @@ function migrateFromJSON() {
         token_input: t.token_usage?.input || null,
         token_output: t.token_usage?.output || null,
         coder_pgid: null,
-        pr_rework_needed: 0,
+        pr_rework_needed: t.pr_rework_needed || 0,
+        pr_touched_checks: t.pr_touched_checks == null ? null :
+          (typeof t.pr_touched_checks === 'string' ? t.pr_touched_checks : JSON.stringify(t.pr_touched_checks)),
         created_at: t.created_at || new Date().toISOString(),
         updated_at: t.updated_at || new Date().toISOString(),
-      });
+      }));
 
       if (t.questions) {
         for (const q of t.questions) {
-          stmts.insertQuestion.run(tid, q.question, q.answer || null, q.round || 1);
+          stmts.insertQuestion.run(tid, q.question, q.answer ?? null, q.round || 1,
+            q.type || 'free_text', q.options == null ? null :
+              (typeof q.options === 'string' ? q.options : JSON.stringify(q.options)));
         }
       }
 
       if (t.activity) {
         for (const a of t.activity) {
-          stmts.insertActivity.run(tid, a.action, a.detail || '', a.time || new Date().toISOString());
+          stmts.insertActivity.run(tid, a.action, a.detail || '', a.stage || null,
+            a.time || new Date().toISOString());
         }
       }
     }
@@ -589,6 +639,8 @@ module.exports = {
   createTicket,
   updateTicket,
   updateTicketField,
+  claimWorktree,
+  releaseWorktree,
   deleteTicket,
   addQuestion,
   updateQuestionAnswer,
@@ -602,5 +654,6 @@ module.exports = {
   finalizeTestRun,
   getLatestTestRun,
   getTestRuns,
+  recoverInterruptedTestRuns,
   close,
 };

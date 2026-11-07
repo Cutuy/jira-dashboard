@@ -121,7 +121,7 @@
           "description": "Comma-separated check names whose FAILURE triggers auto-move to clarification for code rework.",
           "type": "string",
           "default": ""
-        },
+        }
       }
     },
     "remoteHost": {
