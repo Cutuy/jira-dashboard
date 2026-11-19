@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { timeAgo } from './lib/utils'
 import { PrBanner } from './components/pr-banner'
 import { ConsoleOutput } from './components/console-output'
@@ -6,6 +6,9 @@ import { ResourceUsageSection } from './components/resource-usage-section'
 import { ImplementationPlanSection } from './components/implementation-plan-section'
 import { UnitTestsSection } from './components/unit-tests-section'
 import { LiveStatusSection } from './components/live-status-section'
+import { Btn } from './components/ui/dashboard-button'
+
+const ReferenceFiles = lazy(() => import('./components/reference-files'))
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
@@ -13,7 +16,7 @@ const OTHER_MARKER = '__other__'
 import {
   Loader2, Link as LinkIcon, ExternalLink, Play, Shield,
   RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check, Sun, Moon, Monitor,
-  GitBranch, GitPullRequest, Ban
+  GitBranch, GitPullRequest, Ban, FolderOpen, LayoutGrid
 } from 'lucide-react'
 
 /* Extract a GitHub PR number from a PR URL (…/pull/123).
@@ -116,35 +119,6 @@ const STAGE_META: Record<Stage, { label: string; dot: string; pill: string }> = 
 /* ─────────────────────────────────────────────────────────
    Tiny UI primitives — no shadcn noise.
    ───────────────────────────────────────────────────────── */
-function Btn({
-  variant = 'default', size = 'md', children, className = '', ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'default' | 'outline' | 'ghost' | 'danger' | 'secondary'
-  size?: 'sm' | 'md'
-}) {
-  const base =
-    'inline-flex items-center justify-center gap-1.5 font-medium rounded-md ' +
-    'transition-colors disabled:opacity-50 disabled:cursor-not-allowed ' +
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20'
-  // sm: 40px on phones (h-10), 28px on desktop (h-7).  md: 44px on phones (h-11), 36px on desktop (h-9).
-  const sizes = {
-    sm: 'h-10 sm:h-7 px-3 sm:px-2.5 t-body sm:t-small',
-    md: 'h-11 sm:h-9 px-4 sm:px-3 t-body',
-  }
-  const variants = {
-    default:    'bg-brand text-brand-fg hover:bg-zinc-700',
-    outline:    'bg-surface text-ink-2 ring-1 ring-border hover:bg-bg hover:text-ink-1',
-    ghost:      'text-ink-2 hover:bg-surface-3 hover:text-ink-1',
-    secondary:  'bg-surface-3 text-ink-2 hover:bg-surface-3',
-    danger:     'bg-red-600 text-white hover:bg-red-700',
-  }
-  return (
-    <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
-      {children}
-    </button>
-  )
-}
-
 function StagePill({ stage }: { stage: string }) {
   const m = STAGE_META[stage as Stage]
   if (!m) return <span className="t-meta text-ink-2">{stage}</span>
@@ -726,6 +700,7 @@ function notify(title: string, body: string) {
 interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; branchDefault?: string; mergeStrategy?: string }
 
 export default function App() {
+  const [filesOpen, setFilesOpen] = useState(() => location.hash === '#files')
   const [tickets, setTickets] = useState<T[]>([])
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -807,15 +782,17 @@ export default function App() {
     load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i)
   }, [load])
 
-  // Open ticket from URL hash (#ticket/<id>) on mount, and react to hashchange.
+  // Open the ticket or Files view selected by the URL hash.
   // Mobile / shared-link flow: pasting the URL opens the right ticket.
   useEffect(() => {
     const fromHash = () => {
+      setFilesOpen(location.hash === '#files')
       const m = location.hash.match(/^#ticket\/([\w-]+)/)
       const id = m?.[1]
       if (id) {
         if (id !== selRef.current?.id) openRef.current(id)
-      } else if (selRef.current) {
+      } else {
+        if (abort.current) { abort.current.abort(); abort.current = null; setLoadingId(null) }
         setSel(null)
         if (poll.current) { poll.current.close(); poll.current = undefined }
       }
@@ -1196,24 +1173,28 @@ export default function App() {
       <header className="sticky top-0 z-30 bg-surface/85 backdrop-blur border-b border-border">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-12 flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2 min-w-0">
-            <h1 className="t-h-page text-ink-1 shrink-0">{cfg.projectName}</h1>
-            <span className="t-small text-ink-2 hidden sm:inline truncate">Project tickets</span>
+            <h1 className="t-h-page text-ink-1 truncate">{cfg.projectName}</h1>
+            {!filesOpen && <span className="t-small text-ink-2 hidden sm:inline shrink-0">Project tickets</span>}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {cfg.testEnabled && (
+            <a href={filesOpen ? '#' : '#files'} className="inline-flex h-10 sm:h-7 items-center gap-1.5 rounded-md px-2.5 t-body sm:t-small font-medium text-ink-2 ring-1 ring-border hover:bg-surface-3 hover:text-ink-1">
+              {filesOpen ? <LayoutGrid className="h-3.5 w-3.5" /> : <FolderOpen className="h-3.5 w-3.5" />}
+              {filesOpen ? 'Board' : 'Files'}
+            </a>
+            {!filesOpen && cfg.testEnabled && (
               <Btn variant="outline" size="sm" onClick={runTest} aria-label="Run Tests">
                 <Play className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Run Tests</span>
               </Btn>
             )}
-            <Btn variant="outline" size="sm" onClick={runPrepush} aria-label="Pre-push check">
+            {!filesOpen && <Btn variant="outline" size="sm" onClick={runPrepush} aria-label="Pre-push check">
               <Shield className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Pre-push</span>
-            </Btn>
-            <Btn variant="outline" size="sm" onClick={restartServer} aria-label="Restart server">
+            </Btn>}
+            {!filesOpen && <Btn variant="outline" size="sm" onClick={restartServer} aria-label="Restart server">
               <RefreshCw className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Restart</span>
-            </Btn>
+            </Btn>}
             <button onClick={cycleTheme} className="h-7 w-7 inline-flex items-center justify-center rounded-md text-ink-2 hover:text-ink-1 hover:bg-surface-3 transition-colors" aria-label={`Theme: ${theme}`}>
               {theme === 'dark' ? <Moon className="h-3.5 w-3.5" /> : theme === 'light' ? <Sun className="h-3.5 w-3.5" /> : <Monitor className="h-3.5 w-3.5" />}
             </button>
@@ -1222,7 +1203,12 @@ export default function App() {
       </header>
 
       {/* ── Main ── */}
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
+      {filesOpen && <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
+        <Suspense fallback={<p role="status" className="t-body text-ink-2">Loading files…</p>}>
+          <ReferenceFiles />
+        </Suspense>
+      </main>}
+      {!filesOpen && <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
         {/* Inline new-ticket form */}
         <div className="bg-surface rounded-lg ring-1 ring-border p-3 mb-5 sm:mb-6">
           <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
@@ -1356,7 +1342,7 @@ export default function App() {
             </section>
           )
         })()}
-      </main>
+      </main>}
 
       {/* ── Ticket popup ── */}
       {loadingId && !sel && (

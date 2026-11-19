@@ -104,6 +104,19 @@
   .t-mono-12  { font-family: var(--font-mono); font-size: 12px; }
 }
 
+/* Reference document preview */
+.reference-markdown > * + * { margin-top: 0.8rem; }
+.reference-markdown :is(h1, h2, h3, h4, h5, h6) { font-weight: 600; }
+.reference-markdown h1 { font-size: 1.35rem; }
+.reference-markdown h2 { font-size: 1.125rem; }
+.reference-markdown :is(ul, ol) { padding-inline-start: 1.5rem; }
+.reference-markdown ul { list-style: disc; }
+.reference-markdown ol { list-style: decimal; }
+.reference-markdown a { text-decoration: underline; }
+.reference-markdown blockquote { border-inline-start: 2px solid var(--color-border-strong); padding-inline-start: 0.8rem; }
+.reference-markdown pre { overflow-x: auto; border-radius: var(--radius); background: var(--color-surface-3); padding: 0.8rem; }
+.reference-markdown :not(pre) > code { border-radius: 0.25rem; background: var(--color-surface-3); padding: 0.1rem 0.25rem; }
+
 /* Base */
 html, body, #root { height: 100%; }
 body {

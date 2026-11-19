@@ -75,6 +75,19 @@ accepting changes or opening a pull request. The board also works on mobile.
 | --- | --- |
 | ![Mobile home](docs/screenshots/mobile-home.png) | ![Mobile ticket](docs/screenshots/mobile-ticket.png) |
 
+## Reference files
+
+Open **Files** from the board and navigate to the destination folder. Use
+**New folder** to create one. Click **Copy** to select files from your
+computer, or drop files onto the Files view. Each file can be up to 50 MiB,
+and a copy with an existing name leaves the original in place.
+
+Select a file to preview Markdown, PDF, or plain text, or download it. Markdown
+and plain-text files over 2 MiB are available as downloads.
+**Copy path** copies the file's absolute path for use in ticket descriptions.
+The dashboard stores files in `<project>/.jira-dashboard/reference/` and also
+lists files you place there through File Explorer.
+
 ## Configuration
 
 | File | Purpose |
