@@ -5,9 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    proxy: { '/api': `http://localhost:${process.env.PORT || 3006}` }
+    proxy: { '/api': `http://127.0.0.1:${process.env.PORT || 3006}` }
   },
-  build: { outDir: '../public-spa' },
   test: {
     environment: 'jsdom',
     globals: true,

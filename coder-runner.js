@@ -1,6 +1,7 @@
 const config = require('./config');
 const coder = require('./coder');
 const db = require('./db');
+const { killProcessTree } = require('./process-utils');
 
 const runningProcs = new Map();
 
@@ -9,16 +10,10 @@ function killTicketProcess(ticketId, pgid, sessionId) {
   const proc = runningProcs.get(ticketId);
   if (proc && proc.pid != null) {
     runningProcs.delete(ticketId);
-    const pid = proc.pid;
-    const signal = (sig) => {
-      try { process.kill(-pid, sig); }
-      catch { try { proc.kill(sig); } catch {} }
-    };
-    signal('SIGTERM');
-    const t = setTimeout(() => signal('SIGKILL'), 2000);
-    if (typeof t.unref === 'function') t.unref();
-    return true;
+    return killProcessTree(proc);
   }
+  // A saved Windows PID can identify a different process after a restart.
+  if (process.platform === 'win32') return false;
   // Post-restart: kill orphaned process group by saved PGID
   if (pgid) {
     try { process.kill(-pgid, 'SIGTERM'); } catch {}
@@ -65,7 +60,7 @@ async function runCoder(ticketId, prompt, opts = {}) {
       cwd: opts.cwd,
       onSpawn: (proc) => {
         runningProcs.set(ticketId, proc);
-        if (proc.pid) db.updateTicketField(ticketId, 'coder_pgid', proc.pid);
+        if (proc.pid && process.platform !== 'win32') db.updateTicketField(ticketId, 'coder_pgid', proc.pid);
       },
     });
     if (result.sessionId) {

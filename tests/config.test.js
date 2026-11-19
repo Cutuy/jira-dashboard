@@ -28,13 +28,14 @@ function removeTmp() {
 // Override config.json project.path to point at our temp dir, then restore
 const configJsonPath = path.join(ROOT, 'config.json');
 function withProjectDir(fn) {
-  const orig = JSON.parse(fs.readFileSync(configJsonPath, 'utf-8'));
+  const original = fs.readFileSync(configJsonPath, 'utf-8');
+  const orig = JSON.parse(original);
   try {
     fs.writeFileSync(configJsonPath, JSON.stringify(
       { ...orig, project: { ...orig.project, path: tmpDir } }, null, 2) + '\n', 'utf-8');
     fn();
   } finally {
-    fs.writeFileSync(configJsonPath, JSON.stringify(orig, null, 2) + '\n', 'utf-8');
+    fs.writeFileSync(configJsonPath, original, 'utf-8');
   }
 }
 
@@ -64,12 +65,13 @@ function withoutEnv(fn) {
 }
 
 function withConfigJson(modify, fn) {
-  const orig = JSON.parse(fs.readFileSync(configJsonPath, 'utf-8'));
+  const original = fs.readFileSync(configJsonPath, 'utf-8');
+  const orig = JSON.parse(original);
   try {
     fs.writeFileSync(configJsonPath, JSON.stringify(modify(orig), null, 2) + '\n', 'utf-8');
     fn();
   } finally {
-    fs.writeFileSync(configJsonPath, JSON.stringify(orig, null, 2) + '\n', 'utf-8');
+    fs.writeFileSync(configJsonPath, original, 'utf-8');
   }
 }
 
@@ -237,7 +239,7 @@ try {
     execSync('git init -q', { cwd: tmpRoot });
     execSync('git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init', { cwd: tmpRoot });
     fs.mkdirSync(path.dirname(wtDir), { recursive: true });
-    execSync(`git worktree add -q ${wtDir} -b feature`, { cwd: tmpRoot });
+    execSync(`git worktree add -q "${wtDir}" -b feature`, { cwd: tmpRoot });
 
     process.chdir(wtDir);
     const cfg = reloadConfig();

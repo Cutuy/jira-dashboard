@@ -19,7 +19,7 @@ function sh(cmd, cwd) {
 }
 
 function makeRepo() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-mgr-test-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jd manager test '));
   sh('git init -q -b main', tmp);
   sh('git config user.email test@test.local', tmp);
   sh('git config user.name test', tmp);
@@ -85,6 +85,12 @@ function unloadManager() {
     assert.strictEqual(sh('git rev-parse --abbrev-ref HEAD', worktreePath), 'feature/abc', 'on feature branch');
     assert.strictEqual(tickets['abc'].worktree_path, worktreePath, 'db records worktree path');
 
+    const existingFile = path.join(worktreePath, 'existing.txt');
+    fs.writeFileSync(existingFile, 'keep on reacquire\n');
+    const reacquired = await manager.acquire(tickets['abc']);
+    assert.strictEqual(reacquired.worktreePath, worktreePath);
+    assert.ok(fs.existsSync(existingFile), 'acquiring a registered worktree preserves its files');
+
     await manager.release('abc');
     assert.ok(!fs.existsSync(worktreePath), 'per-ticket worktree removed on release');
     assert.strictEqual(tickets['abc'].worktree_path, null, 'db worktree path cleared');
@@ -147,7 +153,7 @@ function unloadManager() {
   const origin = makeRepo(); // acts as the remote
   const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-mgr-clone-'));
   try {
-    sh(`git clone -q ${origin} ${clone}`, os.tmpdir());
+    sh(`git clone -q "${origin}" "${clone}"`, os.tmpdir());
     sh('git config user.email test@test.local', clone);
     sh('git config user.name test', clone);
     sh('git config commit.gpgsign false', clone);

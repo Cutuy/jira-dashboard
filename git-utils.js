@@ -1,20 +1,21 @@
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { execFileSync } = require('child_process');
 const config = require('./config');
-const { escShell } = require('./helpers');
+const { spawnManaged } = require('./process-utils');
 
 function runGit(args, cwd) {
-  return require('child_process').execSync(`git ${args}`, {
+  return execFileSync('git', args, {
     cwd: cwd || config.projectDir,
     encoding: 'utf-8',
     timeout: config.coder.timeouts.command,
+    stdio: 'pipe',
   }).trim();
 }
 
-function execAsync(command, cwd, timeout, onSpawn) {
+function execAsync(file, args, cwd, timeout, onSpawn) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('bash', ['-lc', command], { cwd, timeout, detached: true });
+    const proc = spawnManaged(file, args, { cwd, timeout });
     if (onSpawn) onSpawn(proc);
     let out = '';
     let err = '';
@@ -34,9 +35,9 @@ function resolveDiffBase(worktreePath, baseBranch) {
   let bestCount = Infinity;
   for (const ref of [`origin/${base}`, base]) {
     let branchPoint;
-    try { branchPoint = runGit(`merge-base ${ref} HEAD`, worktreePath); } catch { continue; }
+    try { branchPoint = runGit(['merge-base', ref, 'HEAD'], worktreePath); } catch { continue; }
     let count;
-    try { count = parseInt(runGit(`rev-list --count ${branchPoint}..HEAD`, worktreePath), 10); } catch { continue; }
+    try { count = parseInt(runGit(['rev-list', '--count', `${branchPoint}..HEAD`], worktreePath), 10); } catch { continue; }
     if (Number.isFinite(count) && count < bestCount) {
       bestCount = count;
       best = branchPoint;
@@ -46,8 +47,8 @@ function resolveDiffBase(worktreePath, baseBranch) {
 }
 
 function popStashAndStage(worktreePath) {
-  try { runGit(`stash pop`, worktreePath); } catch {}
-  runGit(`add -A`, worktreePath);
+  try { runGit(['stash', 'pop'], worktreePath); } catch {}
+  runGit(['add', '-A'], worktreePath);
 }
 
 function isWorktreeDirty(statusOutput) {
@@ -60,7 +61,7 @@ function assertWorktreeClean(ticket, { stage, allow = false } = {}) {
   if (!fs.existsSync(path.join(ticket.worktree_path, '.git'))) return;
   let status = '';
   try {
-    status = runGit(`status --porcelain`, ticket.worktree_path);
+    status = runGit(['status', '--porcelain'], ticket.worktree_path);
   } catch {
     return;
   }
@@ -74,7 +75,7 @@ function getBranchStaleness(worktreePath, baseBranch) {
   if (!worktreePath || !fs.existsSync(path.join(worktreePath, '.git'))) return null;
   const base = baseBranch || config.branchDefault;
   try {
-    const count = runGit(`rev-list --count HEAD..${base}`, worktreePath);
+    const count = runGit(['rev-list', '--count', `HEAD..${base}`], worktreePath);
     return parseInt(count, 10) || 0;
   } catch {
     return null;
@@ -85,14 +86,14 @@ function commitWorktreeChanges(worktreePath, ticketId, message, { partial = fals
   const db = require('./db');
   const tag = partial ? 'commit_partial' : 'commit';
   try {
-    const status = runGit(`status --porcelain`, worktreePath);
+    const status = runGit(['status', '--porcelain'], worktreePath);
     if (!status) {
       db.logActivity(ticketId, 'commit_skipped', 'no uncommitted changes in worktree');
       return null;
     }
-    runGit(`add -A`, worktreePath);
-    runGit(`commit -m "${escShell(message)}"`, worktreePath);
-    const sha = runGit(`rev-parse HEAD`, worktreePath);
+    runGit(['add', '-A'], worktreePath);
+    runGit(['commit', '-m', message], worktreePath);
+    const sha = runGit(['rev-parse', 'HEAD'], worktreePath);
     db.logActivity(ticketId, tag, `${sha.slice(0, 7)}: ${message.replace(/"/g, '')}`);
     return sha;
   } catch (err) {

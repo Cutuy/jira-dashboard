@@ -17,7 +17,7 @@ function sh(cmd, cwd) {
 }
 
 function makeRepo() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-pool-test-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jd pool test '));
   sh('git init -q -b main', tmp);
   sh('git config user.email test@test.local', tmp);
   sh('git config user.name test', tmp);
@@ -223,7 +223,7 @@ function linkedWorktrees(repo) {
   const origin = makeRepo(); // acts as the remote
   const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-pool-clone-'));
   try {
-    sh(`git clone -q ${origin} ${clone}`, os.tmpdir());
+    sh(`git clone -q "${origin}" "${clone}"`, os.tmpdir());
     sh('git config user.email test@test.local', clone);
     sh('git config user.name test', clone);
     sh('git config commit.gpgsign false', clone);

@@ -1,7 +1,12 @@
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
 const config = require('./config');
+const { gitBash, spawnManaged, spawnShell } = require('./process-utils');
+
+function testInvocation(framework, program, args) {
+  const displayProgram = /\s/.test(program) ? `"${program}"` : program;
+  return { framework, command: [displayProgram, ...args].join(' '), program, args };
+}
 
 function detectTestFramework(worktreePath) {
   if (!worktreePath || !fs.existsSync(worktreePath)) return null;
@@ -37,16 +42,15 @@ function detectTestFramework(worktreePath) {
     const isKnownProject = pkgName === config.projectName;
 
     if (isKnownProject) {
-      const py = config.venvPython();
-      const envOverride = `PYTHONPATH=${path.join(config.projectDir, 'src')}`;
-      const cmd = config.test.commandOverride || `${envOverride} ${py} -m ${config.projectName}.test`;
-      return { framework: 'pytest', command: cmd };
+      return {
+        ...testInvocation('pytest', config.venvPython(), ['-m', `${config.projectName}.test`]),
+        pythonPath: 'src',
+      };
     }
   }
 
   if (has('pyproject.toml') || has('pytest.ini') || has('setup.py') || has('tests/') || has('test/')) {
-    const py = config.venvPython();
-    return { framework: 'pytest', command: `${py} -m pytest -x --tb=short -q` };
+    return testInvocation('pytest', config.venvPython(), ['-m', 'pytest', '-x', '--tb=short', '-q']);
   }
 
   if (has('scripts/test.sh')) return { framework: 'shell', command: 'bash scripts/test.sh' };
@@ -55,7 +59,7 @@ function detectTestFramework(worktreePath) {
   return null;
 }
 
-function execTestCommand(command, cwd, timeoutMs) {
+function execTestCommand({ command, framework, program, args, pythonPath = config.venv.pythonpath }, cwd, timeoutMs) {
   return new Promise((resolve) => {
     const start = Date.now();
     let stdout = '';
@@ -67,19 +71,22 @@ function execTestCommand(command, cwd, timeoutMs) {
       resolve({
         status,
         exit_code: extra.exit_code ?? null,
-        output: (stdout + (stderr ? '\n--- stderr ---\n' + stderr : '')).slice(-64 * 1024),
+        output: (extra.output ?? (stdout + (stderr ? '\n--- stderr ---\n' + stderr : ''))).slice(-64 * 1024),
         duration_ms: Date.now() - start,
       });
     };
 
     let proc;
     try {
-      proc = spawn('bash', ['-lc', command], {
+      const options = {
         cwd,
-        env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
+        env: { ...process.env, PYTHONPATH: path.join(config.projectDir, pythonPath) },
         timeout: timeoutMs,
         stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      };
+      if (program) proc = spawnManaged(program, args, options);
+      else if (framework === 'shell') proc = spawnManaged(gitBash(), [command.slice('bash '.length)], options);
+      else proc = spawnShell(command, options);
     } catch (err) {
       return finish('error', { exit_code: -1, output: 'spawn error: ' + err.message });
     }
@@ -157,7 +164,7 @@ function runTicketTests(ticketId, triggeredBy = 'auto') {
   sseBroadcast(ticketId, 'test_status', { run_id: runId, status: 'running', framework: det.framework });
 
   (async () => {
-    const result = await execTestCommand(det.command, wt, config.test.timeout);
+    const result = await execTestCommand(det, wt, config.test.timeout);
     const parsed = parseTestSummary(result.output);
     const summary = formatSummary(parsed, result.status);
     const row = db.finalizeTestRun(runId, { ...result, summary });

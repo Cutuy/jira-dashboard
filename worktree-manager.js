@@ -12,7 +12,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const config = require('./config');
 const db = require('./db');
@@ -63,7 +63,7 @@ const FETCH_TIMEOUT = 600_000; // 10 min
 // status output can't overflow (ENOBUFS). Pass `timeout` to override for
 // operations (like `worktree add`) that legitimately run longer.
 function git(args, cwd, timeout = config.coder.timeouts.command) {
-  return execSync(`git ${args}`, {
+  return execFileSync('git', args, {
     cwd: cwd || config.projectDir,
     encoding: 'utf-8',
     timeout,
@@ -132,9 +132,9 @@ async function acquire(ticket) {
       // checkout changed branches). Use plain checkout (no -B) to preserve
       // existing commits on the branch.
       try {
-        git(`checkout ${ticket.branch_name}`, worktreePath);
+        git(['checkout', ticket.branch_name], worktreePath);
       } catch {
-        git(`checkout -b ${ticket.branch_name}`, worktreePath);
+        git(['checkout', '-b', ticket.branch_name], worktreePath);
       }
     } else {
       console.log(`[acquire] ${ticket.id} acquiring new pool slot...`);
@@ -147,8 +147,8 @@ async function acquire(ticket) {
       // switch this worktree to that branch instead of the fresh default-base one.
       if (ticket.branch_name) {
         try {
-          git(`fetch origin ${ticket.branch_name}`, config.projectDir, FETCH_TIMEOUT);
-          git(`checkout -B ${ticket.branch_name} origin/${ticket.branch_name}`, worktreePath);
+          git(['fetch', 'origin', ticket.branch_name], config.projectDir, FETCH_TIMEOUT);
+          git(['checkout', '-B', ticket.branch_name, `origin/${ticket.branch_name}`], worktreePath);
           console.log(`[acquire] ${ticket.id} checked out existing branch ${ticket.branch_name}`);
         } catch (e) {
           console.log(`[acquire] ${ticket.id} could not fetch existing branch ${ticket.branch_name}: ${e.message}`);
@@ -165,7 +165,10 @@ async function acquire(ticket) {
     worktreePath = path.join(config.worktreesDir, safeId(ticket.id));
     const dirHere = fs.existsSync(worktreePath);
     const tracked = (() => {
-      try { return git('worktree list').includes(worktreePath); }
+      try {
+        return git(['worktree', 'list', '--porcelain', '-z']).split('\0').some(field =>
+          field.startsWith('worktree ') && path.relative(worktreePath, field.slice(9)) === '');
+      }
       catch { return false; }
     })();
     console.log(`[implement] ${ticket.id} dirHere=${dirHere} tracked=${tracked} path=${worktreePath}`);
@@ -176,7 +179,7 @@ async function acquire(ticket) {
       if (dirHere) fs.rmSync(worktreePath, { recursive: true, force: true });
 
       // Drop any stale branch from a previous attempt.
-      try { git(`branch -D ${branchName}`); } catch { /* no stale branch */ }
+      try { git(['branch', '-D', branchName]); } catch { /* no stale branch */ }
 
       // Create the worktree with a fresh branch off the default branch in one
       // step. This NEVER touches the main checkout's working tree — it's a
@@ -185,7 +188,7 @@ async function acquire(ticket) {
       // ticket doesn't start weeks behind origin (see pool.freshDefaultBase).
       const ticketBranchDefault = ticket.base_branch || config.branchDefault;
       const base = pool.freshDefaultBase({ cwd: config.projectDir, branchDefault: ticketBranchDefault });
-      git(`worktree add -b ${branchName} ${worktreePath} ${base}`, undefined, WORKTREE_ADD_TIMEOUT);
+      git(['worktree', 'add', '-b', branchName, worktreePath, base], undefined, WORKTREE_ADD_TIMEOUT);
     }
   }
 
@@ -221,11 +224,11 @@ async function release(ticketId) {
   }
 
   if (wt) {
-    try { git(`worktree remove --force ${wt}`); }
+    try { git(['worktree', 'remove', '--force', wt]); }
     catch (e) { db.logActivity(ticketId, 'cleanup_warn', `worktree remove failed (non-fatal): ${e.message}`); }
   }
   if (bn) {
-    try { git(`branch -D ${bn}`); }
+    try { git(['branch', '-D', bn]); }
     catch (e) { db.logActivity(ticketId, 'cleanup_warn', `branch delete failed (non-fatal): ${e.message}`); }
   }
   if (wt && fs.existsSync(wt)) {

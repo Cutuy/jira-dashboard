@@ -1,6 +1,7 @@
 const assert = (() => { try { return require('assert'); } catch { return require('node:assert'); } })();
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 
 const { slugFromTitle, ticketId, uid, escShell, formatPlanText } = require('../helpers');
@@ -113,7 +114,7 @@ const { isWorktreeDirty } = require('../git-utils');
 
 // ── detectTestFramework: always returns something or null ──
 (function testDetectTestFramework() {
-  const tmp = fs.mkdtempSync('/tmp/jd-tf-');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-tf-'));
   try {
     const r = detectTestFramework(tmp);
     // When commandOverride is not set, returns null on empty dir.

@@ -1,25 +1,22 @@
 // config.js — unified config loader
 // Discovers <projectDir>/.jira-dashboard/.env by walking up from cwd,
-// then loads config.json on top as override. All code imports from this
-// module; no other file reads env/paths directly.
+// and applies its overrides to config.json defaults.
 
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // ── Project root discovery ────────────────────────────────
-// Three strategies, in priority order:
-//   1. cfg.project.path from config.json, if it exists on disk (explicit override)
-//   2. Git-aware: parent of `git rev-parse --git-common-dir` (worktree-safe)
-//   3. Walk up looking for .jira-dashboard/.env (legacy install shape)
-//   4. process.cwd() as last resort
+// The Windows launcher explicitly sets JIRA_DASHBOARD_PROJECT_DIR. Otherwise
+// use config.json's project.path, Git's main checkout, an ancestor's dashboard
+// config, or the current directory, in that order.
 
 // Resolve the main repo root when cwd is inside a git repo or worktree.
 // Works correctly in self-host / dogfood cases where the worktree is a clean
 // checkout of the jira-dashboard source itself.
 function gitCommonDirAncestor() {
   try {
-    const common = execSync('git rev-parse --git-common-dir', { encoding: 'utf-8' }).trim();
+    const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { encoding: 'utf-8', stdio: 'pipe' }).trim();
     if (!common) return null;
     return path.resolve(path.dirname(common));
   } catch {
@@ -53,7 +50,7 @@ if (fs.existsSync(configPath)) {
 const explicitProjectPath = (cfg.project?.path && fs.existsSync(cfg.project?.path))
   ? cfg.project.path
   : null;
-const PROJECT_DIR = explicitProjectPath || gitCommonDirAncestor() || findProjectDir() || process.cwd();
+const PROJECT_DIR = process.env.JIRA_DASHBOARD_PROJECT_DIR || explicitProjectPath || gitCommonDirAncestor() || findProjectDir() || process.cwd();
 
 // ── .env loader ────────────────────────────────────────────
 function loadEnv(filePath) {
@@ -80,7 +77,8 @@ const dashEnvPath = path.join(PROJECT_DIR, '.jira-dashboard', '.env');
 const envVars = loadEnv(dashEnvPath);
 
 if (!fs.existsSync(dashEnvPath)) {
-  console.warn(`No dashboard .env at ${dashEnvPath} — using defaults. Run install/run.sh.`);
+  const setup = process.platform === 'win32' ? 'bootstrap.ps1' : 'bootstrap.sh';
+  console.warn(`No dashboard .env at ${dashEnvPath} — using defaults. Run ${setup}.`);
 }
 
 // Project environment from <project>/.env — injected into process.env
@@ -178,16 +176,16 @@ const config = {
 
   // ── Convenience helpers ──────────────────────────────────
   venvBin() {
-    return path.join(this.projectDir, this.venv.dir, 'bin');
+    return path.resolve(this.projectDir, this.venv.dir, process.platform === 'win32' ? 'Scripts' : 'bin');
   },
   venvPython() {
     const bin = this.venvBin();
-    const candidates = ['python', 'python3'];
+    const candidates = process.platform === 'win32' ? ['python.exe'] : ['python', 'python3'];
     for (const p of candidates) {
       const pypath = path.join(bin, p);
       if (fs.existsSync(pypath)) return pypath;
     }
-    return 'python3';
+    return process.platform === 'win32' ? 'python' : 'python3';
   },
   ticketContextDir(ticketId) {
     const safe = String(ticketId).replace(/[^a-zA-Z0-9._-]/g, '_');

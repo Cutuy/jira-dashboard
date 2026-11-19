@@ -1,5 +1,4 @@
 const express = require('express');
-const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -17,12 +16,13 @@ const { runGit, execAsync, resolveDiffBase, popStashAndStage, assertWorktreeClea
 const { runTicketTests, buildTestContextForPrompt } = require('./test-runner');
 const { startPrChecker } = require('./pr-checker');
 const { runMachineChecks } = require('./machine-checks');
+const { gitBash, spawnManaged, spawnShell } = require('./process-utils');
 let _recheckTicket = null;
 let _startWatchingPr = null;
 let _runClarify = null;
 let _systemChecks = [];
 
-const { PREPUSH_RUN_PREFIX, TEST_RUN_PREFIX, STAGE_LABELS, uid, slugFromTitle, ticketId, formatPlanText, escShell } = helpers;
+const { PREPUSH_RUN_PREFIX, TEST_RUN_PREFIX, STAGE_LABELS, uid, slugFromTitle, ticketId, formatPlanText } = helpers;
 
 const PORT = config.port;
 const DATA_DIR = config.dataDir;
@@ -123,12 +123,12 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
   const cmdTimeout = config.coder.timeouts.command;
   const register = (proc) => runningProcs.set(ticketId, proc);
   try {
-    await execAsync(`git push --force origin ${branchName}`, worktreePath, pushTimeout, register);
+    await execAsync('git', ['push', '--force', 'origin', branchName], worktreePath, pushTimeout, register);
     if (ticketGone(ticketId)) return;
     db.logActivity(ticketId, 'branch_pushed', `Pushed ${branchName} to origin`);
 
     const t = db.getTicket(ticketId);
-    const baseFlag = t?.base_branch ? ` --base "${escShell(t.base_branch)}"` : '';
+    const baseArgs = t?.base_branch ? ['--base', t.base_branch] : [];
     let prUrl = null;
 
     if (t?.pr_url) {
@@ -141,7 +141,7 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
         const prNum = m[2];
         try {
           const headRef = await execAsync(
-            `gh pr view ${prNum} --hostname ${host} --json headRefName --jq .headRefName`,
+            'gh', ['pr', 'view', prNum, '--hostname', host, '--json', 'headRefName', '--jq', '.headRefName'],
             worktreePath, cmdTimeout, register
           );
           if (headRef.trim() === branchName) {
@@ -153,7 +153,7 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
 
     if (!prUrl) {
       try {
-        prUrl = await execAsync(`gh pr create --title "${escShell(title)}" --body ""${baseFlag}`,
+        prUrl = await execAsync('gh', ['pr', 'create', '--title', title, '--body', '', ...baseArgs],
           worktreePath, cmdTimeout, register);
         db.logActivity(ticketId, 'pr_created', prUrl);
         // Fresh PR — clear stale PR state inherited from prior lifecycle
@@ -161,7 +161,7 @@ async function pushAndOpenPr(ticketId, branchName, title, worktreePath) {
         db.updateTicketField(ticketId, 'pr_touched_checks', null);
         db.updateTicketField(ticketId, 'review_feedback', null);
       } catch {
-        const remoteUrl = await execAsync(`git config --get remote.origin.url`, worktreePath, cmdTimeout, register);
+        const remoteUrl = await execAsync('git', ['config', '--get', 'remote.origin.url'], worktreePath, cmdTimeout, register);
         const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
         prUrl = `https://github.com/${repoPath}/pull/new/${branchName}`;
         db.logActivity(ticketId, 'pr_link', prUrl);
@@ -206,13 +206,13 @@ async function finishImplement(ticketId, worktreePath, runTokens, onProgress) {
 
   let commitSha = commitWorktreeChanges(worktreePath, ticket.id, `${ticket.id}: implement`);
   if (!commitSha) {
-    try { commitSha = runGit(`rev-parse HEAD`, worktreePath); } catch {}
+    try { commitSha = runGit(['rev-parse', 'HEAD'], worktreePath); } catch {}
   }
 
   let diffSummary = '';
-  try { diffSummary = runGit(`log ${resolveDiffBase(worktreePath, ticket.base_branch)}..HEAD --stat`, worktreePath); } catch {}
+  try { diffSummary = runGit(['log', `${resolveDiffBase(worktreePath, ticket.base_branch)}..HEAD`, '--stat'], worktreePath); } catch {}
   if (!diffSummary) {
-    try { diffSummary = runGit(`diff --stat HEAD`, worktreePath); } catch { diffSummary = '(no diff)'; }
+    try { diffSummary = runGit(['diff', '--stat', 'HEAD'], worktreePath); } catch { diffSummary = '(no diff)'; }
   }
 
   const t2 = db.getTicket(ticket.id);
@@ -233,11 +233,13 @@ async function finishImplement(ticketId, worktreePath, runTokens, onProgress) {
 // ── Express app ───────────────────────────────────────────
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public-spa')));
+const clientBuild = path.join(__dirname, 'client', 'dist');
+const staticDir = fs.existsSync(path.join(clientBuild, 'index.html')) ? clientBuild : path.join(__dirname, 'public-spa');
+app.use(express.static(staticDir));
 
 // SPA fallback
 app.get(/^(?!\/api\/).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public-spa', 'index.html'));
+  res.sendFile(path.join(staticDir, 'index.html'));
 });
 
 // ── Client config ─────────────────────────────────────────
@@ -276,11 +278,7 @@ async function getTicketResponse(id) {
       const m = prUrl.match(/\/pull\/(\d+)/);
       if (m) {
         try {
-          const { exec } = require('child_process');
-          const stdout = await new Promise((res, rej) => {
-            exec(`gh pr view ${m[1]} --json state`, { cwd: config.projectDir, timeout: 5000 },
-              (err, out) => err ? rej(err) : res(out));
-          });
+          const stdout = await execAsync('gh', ['pr', 'view', m[1], '--json', 'state'], config.projectDir, 5000);
           const parsed = JSON.parse(stdout);
           if (parsed?.state) {
             pr_state = parsed.state.toLowerCase();
@@ -865,7 +863,7 @@ app.post('/api/tickets/:id/implement', async (req, res) => {
         await new Promise(r => setTimeout(r, 2000));
         if (!monitorActive) break;
         try {
-          const changed = await execAsync(`git diff --name-only`, worktreePath, 5000);
+          const changed = await execAsync('git', ['diff', '--name-only'], worktreePath, 5000);
           if (changed) {
             changed.split('\n').forEach(f => {
               if (!seenFiles.has(f)) {
@@ -984,14 +982,14 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
 
   try {
     // Abort any stale in-progress rebase
-    try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+    try { runGit(['rebase', '--abort'], ticket.worktree_path); } catch {}
 
     // Stash uncommitted changes before rebase
     let hadStash = false;
     try {
-      const status = runGit(`status --porcelain`, ticket.worktree_path);
+      const status = runGit(['status', '--porcelain'], ticket.worktree_path);
       if (status) {
-        runGit(`stash --include-untracked`, ticket.worktree_path);
+        runGit(['stash', '--include-untracked'], ticket.worktree_path);
         hadStash = true;
       }
     } catch {}
@@ -1005,10 +1003,10 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
 
     // Attempt the rebase
     try {
-      runGit(`rebase ${rebaseBase}`, ticket.worktree_path);
+      runGit(['rebase', rebaseBase], ticket.worktree_path);
       if (hadStash) popStashAndStage(ticket.worktree_path);
 
-      const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+      const newSha = runGit(['rev-parse', 'HEAD'], ticket.worktree_path);
       db.logActivity(ticket.id, 'rebase_done', `Rebased onto ${rebaseBranch}: ${newSha.slice(0, 7)}`);
       db.updateTicketField(ticket.id, 'status', 'idle');
       db.updateTicketField(ticket.id, 'commit_sha', newSha);
@@ -1020,8 +1018,8 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
       let conflictFiles = [];
       let gitStatus = '';
       try {
-        gitStatus = runGit(`status`, ticket.worktree_path);
-        conflictFiles = runGit(`diff --name-only --diff-filter=U`, ticket.worktree_path)
+        gitStatus = runGit(['status'], ticket.worktree_path);
+        conflictFiles = runGit(['diff', '--name-only', '--diff-filter=U'], ticket.worktree_path)
           .split('\n').map(s => s.trim()).filter(Boolean);
       } catch {}
 
@@ -1068,7 +1066,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
         // Check if conflicts remain
         let remainingConflicts = [];
         try {
-          remainingConflicts = runGit(`diff --name-only --diff-filter=U`, ticket.worktree_path)
+          remainingConflicts = runGit(['diff', '--name-only', '--diff-filter=U'], ticket.worktree_path)
             .split('\n').map(s => s.trim()).filter(Boolean);
         } catch {}
 
@@ -1082,9 +1080,9 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
           // Coder resolved — try to continue rebase
           db.updateTicketField(ticket.id, 'status', 'running');
           try {
-            runGit(`rebase --continue`, ticket.worktree_path);
+            runGit(['rebase', '--continue'], ticket.worktree_path);
             if (hadStash) popStashAndStage(ticket.worktree_path);
-            const newSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+            const newSha = runGit(['rev-parse', 'HEAD'], ticket.worktree_path);
             db.logActivity(ticket.id, 'rebase_done', `Coder resolved conflicts. Rebased onto ${ticket.base_branch || config.branchDefault}: ${newSha.slice(0, 7)}`);
             db.updateTicketField(ticket.id, 'status', 'idle');
             db.updateTicketField(ticket.id, 'commit_sha', newSha);
@@ -1098,7 +1096,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
         }
 
         // Coder couldn't resolve — abort rebase, generate conflict clarification questions
-        try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+        try { runGit(['rebase', '--abort'], ticket.worktree_path); } catch {}
         if (hadStash) popStashAndStage(ticket.worktree_path);
 
         db.logActivity(ticket.id, 'rebase_coder_unresolved', `Coder could not resolve conflicts in ${conflictFiles.length} files`);
@@ -1117,7 +1115,7 @@ app.post('/api/tickets/:id/rebase', async (req, res) => {
         });
       } catch (coderErr) {
         // Coder itself crashed/errored — generate conflict clarification questions
-        try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+        try { runGit(['rebase', '--abort'], ticket.worktree_path); } catch {}
         if (hadStash) popStashAndStage(ticket.worktree_path);
 
         db.logActivity(ticket.id, 'rebase_coder_error', coderErr.message.slice(0, 200));
@@ -1153,7 +1151,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     return res.status(500).json({ error: msg, ticket: db.getTicket(ticket.id) });
   }
   try {
-    runGit(`rev-parse --verify ${ticket.branch_name}`, ticket.worktree_path);
+    runGit(['rev-parse', '--verify', ticket.branch_name], ticket.worktree_path);
   } catch (err) {
     const msg = `Worktree integrity check failed: branch '${ticket.branch_name}' does not resolve (${err.message}).`;
     db.logActivity(ticket.id, 'ready_error', msg);
@@ -1163,8 +1161,8 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
   let commitSha = null;
   try {
     let hasChanges = false;
-    try { runGit(`diff --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
-    try { runGit(`diff --cached --quiet`, ticket.worktree_path); } catch { hasChanges = true; }
+    try { runGit(['diff', '--quiet'], ticket.worktree_path); } catch { hasChanges = true; }
+    try { runGit(['diff', '--cached', '--quiet'], ticket.worktree_path); } catch { hasChanges = true; }
     const readyBaseBranch = ticket.base_branch || config.branchDefault;
     // PR strategy only commits new worktree changes — pre-existing branch
     // commits (from a prior run) are already on the branch and don't need
@@ -1172,7 +1170,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     // subsequent rebase/cherry-pick has something to apply.
     if (!hasChanges && config.mergeStrategy !== 'pr') {
       try {
-        const ahead = parseInt(runGit(`rev-list --count origin/${readyBaseBranch}..${ticket.branch_name}`, ticket.worktree_path), 10) || 0;
+        const ahead = parseInt(runGit(['rev-list', '--count', `origin/${readyBaseBranch}..${ticket.branch_name}`], ticket.worktree_path), 10) || 0;
         if (ahead > 0) hasChanges = true;
       } catch {}
     }
@@ -1186,10 +1184,10 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
     // PR strategy: no new commit needed if worktree is clean — the coder's
     // commits are already on the branch. Just push and create/update the PR.
     if (config.mergeStrategy === 'pr' && !hasChanges) {
-      commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+      commitSha = runGit(['rev-parse', 'HEAD'], ticket.worktree_path);
     } else {
       const commitMsg = `${ticket.id}: ${ticket.title}`;
-      runGit(`add -A`, ticket.worktree_path);
+      runGit(['add', '-A'], ticket.worktree_path);
 
       // PR strategy preserves branch history. Other strategies squash into
       // a single commit for clean cherry-pick / merge.
@@ -1197,7 +1195,7 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
         const baseSha = ticket.base_sha;
         if (baseSha) {
           try {
-            runGit(`reset --soft ${baseSha}`, ticket.worktree_path);
+            runGit(['reset', '--soft', baseSha], ticket.worktree_path);
             db.logActivity(ticket.id, 'squashed', `All commits squashed to base ${baseSha.slice(0, 7)}`);
           } catch {
             db.logActivity(ticket.id, 'squash_skipped', 'Could not reset to recorded base, committing as-is');
@@ -1207,8 +1205,8 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
         }
       }
 
-      runGit(`commit -m "${escShell(commitMsg)}"`, ticket.worktree_path);
-      commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+      runGit(['commit', '-m', commitMsg], ticket.worktree_path);
+      commitSha = runGit(['rev-parse', 'HEAD'], ticket.worktree_path);
       db.logActivity(ticket.id, 'committed', commitSha);
       assertWorktreeClean(ticket, { stage: 'cherry-pick' });
     }
@@ -1226,8 +1224,8 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
       return res.json({ success: true, pending: true, commit_sha: commitSha, ticket: db.getTicket(ticket.id) });
     } else {
       try {
-        runGit(`rebase ${readyBaseBranch}`, ticket.worktree_path);
-        commitSha = runGit(`rev-parse HEAD`, ticket.worktree_path);
+        runGit(['rebase', readyBaseBranch], ticket.worktree_path);
+        commitSha = runGit(['rev-parse', 'HEAD'], ticket.worktree_path);
         // Move the default-branch ref to the rebased commit via plumbing.
         // `git update-ref` is a metadata operation: it rewrites the branch
         // pointer without touching the main checkout's working tree — no
@@ -1235,18 +1233,18 @@ app.post('/api/tickets/:id/ready', async (req, res) => {
         // local changes. If those changes ever need to be reconciled with
         // the new branch state, that's a regular git reset/merge the user
         // can do in their own time.
-        runGit(`update-ref refs/heads/${readyBaseBranch} ${commitSha}`);
+        runGit(['update-ref', `refs/heads/${readyBaseBranch}`, commitSha]);
       } catch (err) {
         db.logActivity(ticket.id, 'rebase_failed', err.message);
-        try { runGit(`rebase --abort`, ticket.worktree_path); } catch {}
+        try { runGit(['rebase', '--abort'], ticket.worktree_path); } catch {}
         // Report rebase conflicts directly from the worktree (no main-checkout
         // involvement). The user can resolve them in their worktree.
         let conflictFiles = [];
         let gitStatus = '';
         try {
-          conflictFiles = runGit(`diff --name-only --diff-filter=U`, ticket.worktree_path)
+          conflictFiles = runGit(['diff', '--name-only', '--diff-filter=U'], ticket.worktree_path)
             .split('\n').map(s => s.trim()).filter(Boolean);
-          gitStatus = runGit(`status --short`, ticket.worktree_path);
+          gitStatus = runGit(['status', '--short'], ticket.worktree_path);
         } catch {}
         const errorDetail = err.message ? err.message.slice(0, 300) : '';
         const fileList = conflictFiles.length > 0
@@ -1330,15 +1328,15 @@ app.get('/api/tickets/:id/diff', (req, res) => {
   }
   try {
     const base = resolveDiffBase(ticket.worktree_path, ticket.base_branch);
-    let diff = runGit(`log ${base}..HEAD --oneline --stat`, ticket.worktree_path);
+    let diff = runGit(['log', `${base}..HEAD`, '--oneline', '--stat'], ticket.worktree_path);
     let files = [];
     if (!diff) {
       // No commits ahead of default branch — changes may have been
       // incorporated via cherry-pick/merge. Show diff from merge-base.
-      diff = runGit(`diff ${base}...HEAD --stat`, ticket.worktree_path);
+      diff = runGit(['diff', `${base}...HEAD`, '--stat'], ticket.worktree_path);
       if (diff) {
         try {
-          const nameOnly = runGit(`log ${base}...HEAD --name-only --format=""`, ticket.worktree_path);
+          const nameOnly = runGit(['log', `${base}...HEAD`, '--name-only', '--format='], ticket.worktree_path);
           files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
         } catch {}
         diff = `(commits already in ${ticket.base_branch || config.branchDefault} — showing diff from merge-base)\n${diff}`;
@@ -1347,7 +1345,7 @@ app.get('/api/tickets/:id/diff', (req, res) => {
       }
     } else {
       try {
-        const nameOnly = runGit(`log ${base}..HEAD --name-only --format=""`, ticket.worktree_path);
+        const nameOnly = runGit(['log', `${base}..HEAD`, '--name-only', '--format='], ticket.worktree_path);
         files = [...new Set(nameOnly.split('\n').map(s => s.trim()).filter(Boolean))];
       } catch {}
     }
@@ -1389,7 +1387,7 @@ app.post('/api/test', (req, res) => {
   const out = fs.createWriteStream(outFile);
   let proc;
   if (config.test.commandOverride) {
-    proc = spawn('bash', ['-lc', config.test.commandOverride], {
+    proc = spawnShell(config.test.commandOverride, {
       cwd: config.projectDir,
       timeout: config.test.timeout,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1397,7 +1395,7 @@ app.post('/api/test', (req, res) => {
   } else {
     const py = config.venvPython();
     const testModule = `${config.projectName}.test`;
-    proc = spawn(py, ['-m', testModule], {
+    proc = spawnManaged(py, ['-m', testModule], {
       cwd: config.projectDir,
       env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
       timeout: config.test.timeout,
@@ -1422,6 +1420,7 @@ app.get('/api/run/:id', (req, res) => {
 app.post('/api/prepush', (req, res) => {
   const hookPath = path.join(config.projectDir, '.githooks', 'pre-push');
   if (!fs.existsSync(hookPath)) return res.status(400).json({ error: 'Pre-push hook not found' });
+  const bash = gitBash();
 
   const runId = `${PREPUSH_RUN_PREFIX}${Date.now()}`;
   const outFile = path.join(DATA_DIR, runId + '.log');
@@ -1429,7 +1428,7 @@ app.post('/api/prepush', (req, res) => {
   res.json({ runId });
 
   const out = fs.createWriteStream(outFile);
-  const proc = spawn('bash', [hookPath], {
+  const proc = spawnManaged(bash, [hookPath], {
     cwd: config.projectDir,
     env: { ...process.env, PYTHONPATH: path.join(config.projectDir, config.venv.pythonpath) },
     timeout: config.test.timeout,
@@ -1442,6 +1441,9 @@ app.post('/api/prepush', (req, res) => {
 });
 
 app.post('/api/restart', (req, res) => {
+  if (process.platform === 'win32') {
+    return res.status(409).json({ error: 'Restart the dashboard from the terminal where it is running.' });
+  }
   res.json({ ok: true });
   // Respond first, then restart — process.exit will kill this process
   setTimeout(() => {
@@ -1525,7 +1527,7 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────────
-(async function recoverStuckTickets() {
+async function recoverStuckTickets() {
   const ids = db.getTicketIds();
   let changed = false;
   for (const tid of ids) {
@@ -1561,7 +1563,7 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
         // "open PR" link so the user can create it manually, then finalize.
         if (latest === 'branch_pushed') {
           try {
-            const remoteUrl = runGit(`config --get remote.origin.url`, t.worktree_path);
+            const remoteUrl = runGit(['config', '--get', 'remote.origin.url'], t.worktree_path);
             const repoPath = remoteUrl.replace(/\.git$/, '').replace(/^.*[:/]/, '');
             db.logActivity(tid, 'pr_link', `https://github.com/${repoPath}/pull/new/${t.branch_name}`);
           } catch {}
@@ -1625,13 +1627,20 @@ app.post('/api/suggestions/:id/dismiss', (req, res) => {
     }
   }
   if (changed) console.log('Crash recovery complete');
-})();
+}
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Jira Dashboard running on http://0.0.0.0:${PORT}`);
+const host = process.platform === 'win32' ? '127.0.0.1' : '0.0.0.0';
+app.listen(PORT, host, (err) => {
+  if (err) {
+    console.error(`Unable to start Jira Dashboard on ${host}:${PORT}: ${err.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Jira Dashboard running on http://${host}:${PORT}`);
   console.log(`   Project: ${config.projectDir} (${config.projectName})`);
   console.log(`   Coder: ${config.coder.type} (${config.coder.bin})`);
   console.log(`   Data: SQLite at ${path.join(DATA_DIR, 'store.db')}`);
+  recoverStuckTickets().catch(err => console.error('Ticket recovery failed:', err.message));
   _systemChecks = runMachineChecks(config);
   for (const c of _systemChecks) {
     if (c.status !== 'ok') console.log(`[machine-check] ${c.status}: ${c.name} — ${c.detail}`);
