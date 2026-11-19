@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // install/setup-worktrees.js — idempotent worktree-pool provisioning.
 //
-// Invoked by install/run.sh. Takes all inputs as args so it does NOT depend on
+// Invoked by the platform installers. Takes all inputs as args so it does not depend on
 // config.js project-dir discovery (which would mis-resolve when run from the
 // dashboard source tree). Safe to run repeatedly: existing pool slots are kept,
 // missing ones created, and slots beyond `count` removed.
