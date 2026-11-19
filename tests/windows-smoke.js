@@ -47,10 +47,25 @@ async function smokeTest() {
   }
 
   async function stop() {
-    if (!dashboard || dashboard.exitCode !== null) return;
-    const exited = once(dashboard, 'exit');
-    execFileSync('taskkill.exe', ['/PID', String(dashboard.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    await exited;
+    if (!dashboard) return;
+    if (dashboard.exitCode === null) {
+      const exited = once(dashboard, 'exit');
+      try {
+        execFileSync('taskkill.exe', ['/PID', String(dashboard.pid), '/T', '/F'], { stdio: 'pipe', windowsHide: true });
+      } catch (err) {
+        // A child can exit while taskkill enumerates the process tree.
+        const didExit = await Promise.race([exited.then(() => true), delay(2000).then(() => false)]);
+        if (!didExit) throw err;
+      }
+      await exited;
+    }
+    await waitFor(async () => {
+      try {
+        await fetch(base + '/api/config', { signal: AbortSignal.timeout(1000) });
+        return false;
+      } catch { return true; }
+    });
+    dashboard = undefined;
   }
 
   async function api(url, method = 'GET', body, expected = 200) {
@@ -104,6 +119,17 @@ if (outputPath) {
     assert.match(script.headers.get('content-type'), /javascript/);
     await script.arrayBuffer();
 
+    const referenceFolder = 'Design notes';
+    await api('/api/files/folders', 'POST', { name: referenceFolder }, 201);
+    const reference = 'overview.md';
+    const document = '# Windows dashboard\n\nFile viewer smoke test.';
+    const uploaded = await fetch(base + '/api/files/content?' + new URLSearchParams({ folder: referenceFolder, name: reference }), {
+      method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: document,
+    });
+    assert.equal(uploaded.status, 201, await uploaded.text());
+    const referenceUrl = base + '/api/files/content?' + new URLSearchParams({ path: referenceFolder + '/' + reference });
+    assert.equal(await (await fetch(referenceUrl)).text(), document);
+
     const { id } = await api('/api/tickets', 'POST', { title: 'Windows ticket', content: 'Create smoke.txt' }, 201);
     const ticketUrl = `/api/tickets/${id}`;
     await waitFor(async () => (await api(ticketUrl)).stage === 'implementation');
@@ -124,11 +150,12 @@ if (outputPath) {
     await stop();
     await start();
     assert.equal((await api(ticketUrl)).stage, 'done', 'SQLite retains the closed ticket after restart');
-    console.log('PASS: Windows bootstrap, board assets, ticket workflow, tests, worktree release, and persistence');
+    assert.equal(await (await fetch(referenceUrl)).text(), document, 'Reference files persist after restart');
   } finally {
     await stop();
     fs.rmSync(project, { recursive: true, force: true, maxRetries: 3 });
   }
+  console.log('PASS: Windows bootstrap, board assets, reference files, ticket workflow, tests, worktree release, and persistence');
 }
 
 smokeTest().catch(err => {

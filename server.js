@@ -17,6 +17,7 @@ const { runTicketTests, buildTestContextForPrompt } = require('./test-runner');
 const { startPrChecker } = require('./pr-checker');
 const { runMachineChecks } = require('./machine-checks');
 const { gitBash, spawnManaged, spawnShell } = require('./process-utils');
+const { createReferenceFilesRouter } = require('./reference-files');
 let _recheckTicket = null;
 let _startWatchingPr = null;
 let _runClarify = null;
@@ -233,6 +234,7 @@ async function finishImplement(ticketId, worktreePath, runTokens, onProgress) {
 // ── Express app ───────────────────────────────────────────
 const app = express();
 app.use(express.json());
+app.use('/api/files', createReferenceFilesRouter(path.join(config.projectDir, '.jira-dashboard', 'reference')));
 const clientBuild = path.join(__dirname, 'client', 'dist');
 const staticDir = fs.existsSync(path.join(clientBuild, 'index.html')) ? clientBuild : path.join(__dirname, 'public-spa');
 app.use(express.static(staticDir));
