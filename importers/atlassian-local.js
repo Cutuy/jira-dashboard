@@ -1,4 +1,3 @@
-const { createHash } = require('node:crypto');
 const { COPYFILE_EXCL } = require('node:fs').constants;
 const { createWriteStream } = require('node:fs');
 const fs = require('node:fs/promises');
@@ -6,25 +5,12 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { boardSource } = require('./atlassian-source');
+const { jiraBoardLayout, jiraTicketPlacement, stageFor } = require('./jira-board');
 
 function safeName(value, length = 65) {
   return String(value || 'Untitled').normalize('NFC')
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, length)
     .replace(/^[ .]+|[ .]+$/g, '') || 'Untitled';
-}
-
-function stageFor(issue, board) {
-  const status = issue.fields.status ?? {};
-  const columns = board.columnConfig?.columns ?? [];
-  const column = columns.find(entry => entry.statuses?.some(item => String(item.id) === String(status.id)));
-  const fromBoard = column?.statuses.find(item => String(item.id) === String(status.id));
-  const category = status.statusCategory?.key ?? issue.fields.statusCategory?.key ?? fromBoard?.category;
-  const label = (String(status.name ?? '') + ' ' + String(column?.name ?? ''))
-    .normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-  if (category === 'done' || /\b(done|closed|resolved|erledigt|abgeschlossen)\b/.test(label)) return 'done';
-  if (/review|prufung|abnahme|verification|\bqa\b/.test(label)) return 'review';
-  if (category === 'indeterminate' || category === 'in-progress') return 'implementation';
-  return 'clarification';
 }
 
 function textBody(value) {
@@ -41,8 +27,6 @@ function toTicket(record, source, board) {
     throw new Error('A source issue is missing a valid Jira key or summary.');
   }
   const sourceUrl = 'https://' + source.cloudId + '/browse/' + key;
-  const id = 'jira-' + createHash('sha256').update(source.cloudId + ':' + (issue.id ?? key)).digest('hex').slice(0, 20)
-    + '-' + key.toLowerCase();
   const originalStatus = fields.status?.name;
   const metadata = [
     'Jira: ' + sourceUrl,
@@ -61,7 +45,8 @@ function toTicket(record, source, board) {
   const now = new Date().toISOString();
   const timestamp = value => Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : now;
   return {
-    id, title: key + ' — ' + fields.summary, sourceUrl, stage: stageFor(issue, board), status: 'idle',
+    ...jiraTicketPlacement(issue, source, board),
+    title: key + ' — ' + fields.summary, sourceUrl, status: 'idle',
     content: [textBody(fields.description), metadata, commentText && 'Jira comments\n\n' + commentText].filter(Boolean).join('\n\n'),
     created_at: timestamp(fields.created), updated_at: timestamp(fields.updated || fields.created),
   };
@@ -211,7 +196,7 @@ async function importAtlassian(snapshot, projectDir, db, { fetchFile = fetch } =
         warnings.push('Attachment ' + file.owner.id + '/' + file.name + ': ' + err.message);
       }
     }
-    const ticketsResult = db.importNewTickets(tickets);
+    const ticketsResult = db.importNewTickets(tickets, jiraBoardLayout(source, snapshot.board));
     return { ...ticketsResult, writtenFiles, skippedFiles, downloaded, archive, warnings };
   } finally {
     await fs.rmdir(scratch);

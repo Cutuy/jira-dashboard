@@ -5,19 +5,24 @@ const path = require('node:path');
 const { test } = require('node:test');
 const { boardSource, collectAtlassian } = require('../importers/atlassian-source');
 const { importAtlassian } = require('../importers/atlassian-local');
+const { restoreArchivedJiraBoards } = require('../importers/jira-board-archive');
 
 const boardUrl = 'https://example.atlassian.net/jira/software/projects/ABC/boards/42?filter=&groupBy=none';
 const source = boardSource(boardUrl);
 const board = {
   id: 42,
   name: 'ABC board',
-  columnConfig: { columns: [{ name: 'In Überprüfung By Human', statuses: [{ id: '3', category: 'new' }] }] },
+  columnConfig: { columns: [
+    { name: 'Automated review', statuses: [{ id: '2', category: 'indeterminate' }] },
+    { name: 'Manual review', statuses: [{ id: '3', category: 'new' }] },
+    { name: 'Empty column', statuses: [] },
+  ] },
 };
 const space = { id: '10', key: 'ABC', name: 'ABC docs', homepageId: '11' };
 const issue = i => ({
   id: String(i), key: 'ABC-' + i, fields: {
     summary: 'Check item ' + i,
-    status: { id: '3', name: 'In Überprüfung By Human', statusCategory: { key: 'new' } },
+    status: { id: '3', name: 'Manual review', statusCategory: { key: 'new' } },
     description: 'Issue text',
     comment: i === 1 ? { total: 2, comments: [] } : { total: 0, comments: [] },
   },
@@ -106,6 +111,10 @@ test('imports tickets, nested documents and attachment bytes, preserving existin
   assert.equal(record.history.length, 1);
   const [ticket] = db.getAllTickets();
   assert.equal(ticket.stage, 'review');
+  const [layout] = db.getJiraBoards();
+  assert.deepEqual(layout.columns.map(column => column.name), ['Automated review', 'Manual review', 'Empty column']);
+  assert.equal(layout.tickets[0].ticketId, ticket.id);
+  assert.equal(layout.tickets[0].statusId, '3');
   assert.match(db.getTicket(ticket.id).content, /A reviewed comment/);
   db.updateTicket(ticket.id, { title: 'Locally edited' });
 
@@ -115,4 +124,24 @@ test('imports tickets, nested documents and attachment bytes, preserving existin
   assert.equal(repeated.writtenFiles, 0);
   assert.equal(db.getTicket(ticket.id).title, 'Locally edited');
   assert.equal(requests, 1);
+
+  // Simulate a dashboard that imported the archive before layout storage existed.
+  const Database = require('better-sqlite3');
+  const metadata = new Database(path.join(project, '.jira-dashboard', 'store.db'));
+  metadata.pragma('foreign_keys = ON');
+  metadata.exec('DELETE FROM jira_boards');
+  metadata.close();
+  assert.deepEqual(db.getJiraBoards(), []);
+  restoreArchivedJiraBoards(project, db);
+  restoreArchivedJiraBoards(project, db);
+  assert.deepEqual(db.getJiraBoards(), [layout]);
+  assert.equal(db.getTicket(ticket.id).title, 'Locally edited');
+
+  const changedBoard = { ...board, columnConfig: { columns: [
+    { name: 'Ready for release', statuses: [] },
+    ...board.columnConfig.columns,
+  ] } };
+  await importAtlassian({ ...snapshot, board: changedBoard }, project, db, { fetchFile });
+  assert.equal(db.getJiraBoards()[0].columns[0].name, 'Ready for release');
+  assert.equal(db.getTicket(ticket.id).title, 'Locally edited');
 });

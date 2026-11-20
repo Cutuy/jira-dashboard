@@ -72,9 +72,24 @@ db.exec(`
     finished_at TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS jira_boards (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    columns_json TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS jira_board_tickets (
+    board_id TEXT NOT NULL REFERENCES jira_boards(id) ON DELETE CASCADE,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    source_status_id TEXT,
+    imported_stage TEXT NOT NULL,
+    PRIMARY KEY (board_id, ticket_id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_questions_ticket ON questions(ticket_id);
   CREATE INDEX IF NOT EXISTS idx_activity_ticket ON activity(ticket_id);
   CREATE INDEX IF NOT EXISTS idx_test_runs_ticket ON test_runs(ticket_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_jira_board_tickets_ticket ON jira_board_tickets(ticket_id);
 `);
 
 // Migration: add type/options columns to questions (added 2026-06-27)
@@ -143,6 +158,23 @@ const stmts = {
     UPDATE tickets SET ${field} = ?, updated_at = ? WHERE id = ?
   `),
   deleteTicket: db.prepare(`DELETE FROM tickets WHERE id = ?`),
+
+  getJiraBoard: db.prepare(`SELECT id FROM jira_boards WHERE id = ?`),
+  listJiraBoards: db.prepare(`SELECT * FROM jira_boards ORDER BY title, id`),
+  listJiraBoardTickets: db.prepare(`
+    SELECT board_id AS boardId, ticket_id AS ticketId, source_status_id AS statusId, imported_stage AS importedStage
+    FROM jira_board_tickets
+  `),
+  saveJiraBoard: db.prepare(`
+    INSERT INTO jira_boards (id, title, columns_json) VALUES (?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET title = excluded.title, columns_json = excluded.columns_json
+  `),
+  saveJiraBoardTicket: db.prepare(`
+    INSERT INTO jira_board_tickets (board_id, ticket_id, source_status_id, imported_stage)
+    SELECT @boardId, @id, @jiraStatusId, @stage WHERE EXISTS (SELECT 1 FROM tickets WHERE id = @id)
+    ON CONFLICT (board_id, ticket_id) DO UPDATE SET
+      source_status_id = excluded.source_status_id, imported_stage = excluded.imported_stage
+  `),
 
   // Questions
   insertQuestion: db.prepare(`
@@ -281,7 +313,30 @@ function createTicket(data) {
   return getTicket(t.id);
 }
 
-function importNewTickets(tickets) {
+function getJiraBoards() {
+  const placements = Object.groupBy(stmts.listJiraBoardTickets.all(), ticket => ticket.boardId);
+  return stmts.listJiraBoards.all().map(row => ({
+    id: row.id, title: row.title, columns: JSON.parse(row.columns_json),
+    tickets: placements[row.id] ?? [],
+  }));
+}
+
+function saveJiraBoard(board, tickets) {
+  stmts.saveJiraBoard.run(board.id, board.title, JSON.stringify(board.columns));
+  for (const ticket of tickets) {
+    stmts.saveJiraBoardTicket.run({
+      boardId: board.id, id: ticket.id, jiraStatusId: ticket.jiraStatusId, stage: ticket.stage,
+    });
+  }
+}
+
+function restoreJiraBoard(board, tickets) {
+  db.transaction(() => {
+    if (!stmts.getJiraBoard.get(board.id)) saveJiraBoard(board, tickets);
+  }).immediate();
+}
+
+function importNewTickets(tickets, jiraBoard) {
   return db.transaction(() => {
     let created = 0;
     for (const ticket of tickets) {
@@ -290,6 +345,7 @@ function importNewTickets(tickets) {
       logActivity(ticket.id, 'imported', ticket.sourceUrl, ticket.stage);
       created++;
     }
+    if (jiraBoard) saveJiraBoard(jiraBoard, tickets);
     return { created, skipped: tickets.length - created };
   }).immediate();
 }
@@ -601,6 +657,8 @@ module.exports = {
   getAllTickets,
   createTicket,
   importNewTickets,
+  getJiraBoards,
+  restoreJiraBoard,
   updateTicket,
   updateTicketField,
   deleteTicket,

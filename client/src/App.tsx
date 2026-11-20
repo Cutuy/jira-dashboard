@@ -85,6 +85,12 @@ type Sug = { id: string; title: string; content: string }
    Order in the board, label, color, accent dot.
    ───────────────────────────────────────────────────────── */
 type Stage = 'clarification' | 'implementation' | 'review' | 'pr_opened' | 'done'
+type JiraBoard = {
+  id: string
+  title: string
+  columns: { id: string; name: string; statuses: { id: string; stage: Stage }[] }[]
+  tickets: { ticketId: string; statusId: string | null; importedStage: Stage }[]
+}
 
 const STAGES: Stage[] = ['clarification', 'implementation', 'review', 'pr_opened', 'done']
 
@@ -127,6 +133,30 @@ function StagePill({ stage }: { stage: string }) {
       <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />
       {m.label}
     </span>
+  )
+}
+
+function BoardColumn({ name, dot, count, children, className = '' }: {
+  name: string; dot: string; count: number; children: React.ReactNode; className?: string
+}) {
+  return (
+    <section aria-label={name} className={`min-w-0 ${className}`}>
+      <header className="flex items-center justify-between gap-2 mb-2.5 px-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+          <h3 className="t-meta font-semibold text-ink-2">{name}</h3>
+        </div>
+        <span className="t-meta text-ink-3 bg-surface-3 px-1.5 py-0.5 rounded">{count}</span>
+      </header>
+      <div className="flex flex-col gap-2.5">
+        {count === 0 && (
+          <div className="rounded-lg border border-dashed border-border py-8 text-center t-small text-ink-3">
+            No tickets
+          </div>
+        )}
+        {children}
+      </div>
+    </section>
   )
 }
 
@@ -702,6 +732,7 @@ interface ClientConfig { projectName: string; remoteHost: string; explorer: { ur
 export default function App() {
   const [filesOpen, setFilesOpen] = useState(() => location.hash === '#files')
   const [tickets, setTickets] = useState<T[]>([])
+  const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([])
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [creating, setCreating] = useState(false)
@@ -738,7 +769,7 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const d = await fetchJSON<{ tickets: T[] }>('/api/tickets')
+      const d = await fetchJSON<{ tickets: T[]; jiraBoards?: JiraBoard[] }>('/api/tickets')
       const prev = prevTicketsRef.current
       const changed: string[] = []
       for (const t of d.tickets) {
@@ -750,6 +781,7 @@ export default function App() {
         setHighlightedIds(prev => { const next = new Set(prev); for (const id of changed) next.add(id); return next })
       }
       setTickets(d.tickets)
+      setJiraBoards(d.jiraBoards ?? [])
     } catch {}
   }, [])
 
@@ -1164,14 +1196,35 @@ export default function App() {
     }
   }
 
-  /* Group tickets by stage once */
-  const byStage = useMemo(() => {
-    const m: Record<Stage, T[]> = { clarification: [], implementation: [], review: [], pr_opened: [], done: [] }
-    for (const t of tickets) {
-      if (t.stage in m) (m as any)[t.stage].push(t)
+  const { byStage, jiraViews, showWorkflow } = useMemo(() => {
+    const ticketsById = new Map(tickets.map(ticket => [ticket.id, ticket]))
+    const onJiraBoard = new Set<string>()
+    const jiraViews = jiraBoards.map(board => {
+      const columns = board.columns.map(column => ({ ...column, items: [] as T[] }))
+      const unmapped: typeof columns[number] = { id: 'unmapped', name: 'Unmapped Jira issues', statuses: [], items: [] }
+      for (const membership of board.tickets) {
+        const ticket = ticketsById.get(membership.ticketId)
+        if (!ticket) continue
+        onJiraBoard.add(ticket.id)
+        const column = ticket.stage === membership.importedStage
+          ? columns.find(candidate => candidate.statuses.some(status => status.id === membership.statusId))
+          : columns.find(candidate => candidate.statuses.some(status => status.stage === ticket.stage))
+        const destination = column ?? unmapped
+        destination.items.push(ticket)
+      }
+      if (unmapped.items.length) columns.push(unmapped)
+      return { id: board.id, title: board.title, columns }
+    })
+    const byStage: Record<Stage, T[]> = { clarification: [], implementation: [], review: [], pr_opened: [], done: [] }
+    for (const ticket of tickets) {
+      if (!onJiraBoard.has(ticket.id) && Object.hasOwn(byStage, ticket.stage)) byStage[ticket.stage as Stage].push(ticket)
     }
-    return m
-  }, [tickets])
+    return { byStage, jiraViews, showWorkflow: jiraBoards.length === 0 || tickets.some(ticket => !onJiraBoard.has(ticket.id)) }
+  }, [jiraBoards, tickets])
+
+  const renderTicket = (ticket: T) => (
+    <TicketCard key={ticket.id} t={ticket} onOpen={open} loading={loadingId === ticket.id} highlighted={highlightedIds.has(ticket.id)} />
+  )
 
   /* Filtered activity for the sidebar (drop noise) */
   const visibleActivity = useMemo(() => {
@@ -1294,39 +1347,36 @@ export default function App() {
           </div>
         )}
 
+        {jiraViews.map(board => (
+          <section key={board.id} aria-label={board.title} className="mb-5">
+            <h2 className="t-h mb-2.5">{board.title}</h2>
+            <div className="grid grid-cols-1 gap-3 sm:flex sm:overflow-x-auto sm:pb-2">
+              {board.columns.map(column => (
+                <BoardColumn key={column.id} name={column.name}
+                  dot={column.statuses[0] ? STAGE_META[column.statuses[0].stage].dot : 'bg-ink-3'}
+                  count={column.items.length} className="sm:min-w-48 sm:flex-1">
+                  {column.items.map(renderTicket)}
+                </BoardColumn>
+              ))}
+            </div>
+          </section>
+        ))}
+
         {/* ── Board: active stages ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
+        {showWorkflow && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
           {STAGES.filter(s => s !== 'done').map(stage => {
             const items = byStage[stage]
             const meta = STAGE_META[stage]
             return (
-              <section key={stage} className="min-w-0">
-                <header className="flex items-center justify-between mb-2.5 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-                    <h3 className="t-meta font-semibold text-ink-2 uppercase tracking-wider">
-                      {meta.label}
-                    </h3>
-                  </div>
-                  <span className="t-meta text-ink-3 bg-surface-3 px-1.5 py-0.5 rounded">
-                    {items.length}
-                  </span>
-                </header>
-                <div className="flex flex-col gap-2.5">
-                  {items.length === 0 && (
-                    <div className="rounded-lg border border-dashed border-border py-8 text-center t-small text-ink-3">
-                      No tickets
-                    </div>
-                  )}
-                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} highlighted={highlightedIds.has(t.id)} />)}
-                </div>
-              </section>
+              <BoardColumn key={stage} name={meta.label} dot={meta.dot} count={items.length}>
+                {items.map(renderTicket)}
+              </BoardColumn>
             )
           })}
-        </div>
+        </div>}
 
         {/* ── Board: done row ── */}
-        {(() => {
+        {showWorkflow && (() => {
           const items = byStage.done
           const meta = STAGE_META.done
           return (
@@ -1348,7 +1398,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
-                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} highlighted={highlightedIds.has(t.id)} />)}
+                  {items.map(renderTicket)}
                 </div>
               )}
             </section>

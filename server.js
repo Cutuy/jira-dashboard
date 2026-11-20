@@ -18,6 +18,7 @@ const { startPrChecker } = require('./pr-checker');
 const { runMachineChecks } = require('./machine-checks');
 const { gitBash, spawnManaged, spawnShell } = require('./process-utils');
 const { createReferenceFilesRouter } = require('./reference-files');
+const { restoreArchivedJiraBoards } = require('./importers/jira-board-archive');
 let _recheckTicket = null;
 let _startWatchingPr = null;
 let _runClarify = null;
@@ -260,7 +261,12 @@ app.get('/api/config', (req, res) => {
 // ── List all tickets ──────────────────────────────────────
 app.get('/api/tickets', (req, res) => {
   const tickets = db.getAllTickets();
-  res.json({ tickets, stages: ['clarification', 'implementation', 'review', 'ready', 'pr_opened', 'done'], stageLabels: STAGE_LABELS });
+  res.json({
+    tickets,
+    stages: ['clarification', 'implementation', 'review', 'ready', 'pr_opened', 'done'],
+    stageLabels: STAGE_LABELS,
+    jiraBoards: db.getJiraBoards(),
+  });
 });
 
 // ── Get single ticket (with resources) ────────────────────
@@ -1634,6 +1640,11 @@ async function recoverStuckTickets() {
 }
 
 const host = process.platform === 'win32' ? '127.0.0.1' : '0.0.0.0';
+try {
+  restoreArchivedJiraBoards(config.projectDir, db);
+} catch (err) {
+  console.error('Could not restore archived Jira boards:', err.message);
+}
 app.listen(PORT, host, (err) => {
   if (err) {
     console.error(`Unable to start Jira Dashboard on ${host}:${PORT}: ${err.message}`);

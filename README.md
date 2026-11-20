@@ -122,7 +122,10 @@ change history, and accessible attachments. It reads the Confluence space with
 the same key as the Jira project. Use `--space KEY` to select another space
 and `--dry-run` to see source counts without writing local data.
 
-Imported tickets appear on the dashboard. The Files view shows Confluence
+Imported tickets appear in the Jira board's original columns, in Jira order.
+This includes empty columns and columns that share a dashboard workflow stage.
+The dashboard restores columns for earlier imports from the local Jira archive.
+The Files view shows Confluence
 documents in their folder hierarchy and stores Jira source records and
 attachments under **Reference → Atlassian**. Repeated imports preserve
 existing local tickets and files. The importer reports unreadable items and
