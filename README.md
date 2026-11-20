@@ -102,6 +102,10 @@ The default runs Python tests. Keep credentials out of version control.
 Adapters for OpenCode, Claude Code, and Codex live in [`coder/`](coder/).
 A dummy adapter is available for testing without a coding service.
 
+AI ticket suggestions are off by default. To enable them, set
+`JIRA_SUGGESTIONS_ENABLED=true` in `<project>/.jira-dashboard/.env` and restart
+the dashboard with a configured coding CLI.
+
 ## Development
 
 ```bash

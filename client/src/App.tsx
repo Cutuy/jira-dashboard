@@ -697,7 +697,7 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
-interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; branchDefault?: string; mergeStrategy?: string }
+interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; suggestionsEnabled: boolean; branchDefault?: string; mergeStrategy?: string }
 
 export default function App() {
   const [filesOpen, setFilesOpen] = useState(() => location.hash === '#files')
@@ -714,14 +714,14 @@ export default function App() {
   const [machineChecks, setMachineChecks] = useState<{ name: string; status: string; detail: string }[]>([])
   const [machineChecksLoading, setMachineChecksLoading] = useState(true)
   const [suggestions, setSuggestions] = useState<Sug[]>([])
-  const [suggestionsLoading, setSuggestionsLoading] = useState(true)
-  const [suggestionsFailed, setSuggestionsFailed] = useState(false)
+  const [suggestionsStatus, setSuggestionsStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
+  const [suggestionsRetry, setSuggestionsRetry] = useState(0)
   const [loadingId, setLoadingId] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
   const [theme, setTheme] = useState<'auto' | 'dark' | 'light'>(
     (typeof localStorage !== 'undefined' && localStorage.getItem('theme') as any) || 'auto'
   )
-  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' }, testEnabled: false })
+  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' }, testEnabled: false, suggestionsEnabled: false })
   const [diff, setDiff] = useState('')
   const [diffFiles, setDiffFiles] = useState<{ path: string; explorer_prefix: string | null }[]>([])
   const [diffCommitSha, setDiffCommitSha] = useState('')
@@ -779,8 +779,33 @@ export default function App() {
   useEffect(() => {
     fetchJSON<ClientConfig>('/api/config').then(setCfg).catch(() => {});
     fetchJSON<{ name: string; status: string; detail: string }[]>('/api/system/checks').then(d => { setMachineChecks(d); setMachineChecksLoading(false); }).catch(() => setMachineChecksLoading(false));
-    load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i)
+    load(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i)
   }, [load])
+
+  useEffect(() => {
+    if (!cfg.suggestionsEnabled) return
+    const controller = new AbortController()
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    setSuggestionsStatus('loading')
+
+    async function pollSuggestions() {
+      if (++attempts > 15) { setSuggestionsStatus('failed'); return }
+      const results = await fetchJSON<Sug[]>('/api/suggestions', { signal: controller.signal }).catch(() => [])
+      if (controller.signal.aborted) return
+      if (results.length > 0) {
+        setSuggestions(results)
+        setSuggestionsStatus('idle')
+      } else {
+        timer = setTimeout(pollSuggestions, 3000)
+      }
+    }
+    void pollSuggestions()
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [cfg.suggestionsEnabled, suggestionsRetry])
 
   // Open the ticket or Files view selected by the URL hash.
   // Mobile / shared-link flow: pasting the URL opens the right ticket.
@@ -908,19 +933,6 @@ export default function App() {
     setSel(null)
     if (poll.current) { poll.current.close(); poll.current = undefined }
     if (location.hash.startsWith('#ticket/')) history.replaceState(null, '', ' ')
-  }
-
-  async function loadSuggestions() {
-    setSuggestionsLoading(true); setSuggestionsFailed(false)
-    let attempts = 0
-    const poll = () => {
-      if (++attempts > 15) { setSuggestionsLoading(false); setSuggestionsFailed(true); return }
-      fetchJSON<Sug[]>('/api/suggestions').then(d => {
-        if (d.length > 0) { setSuggestions(d); setSuggestionsLoading(false); return }
-        setTimeout(poll, 3000)
-      }).catch(() => setTimeout(poll, 3000))
-    }
-    poll()
   }
 
   async function acceptSuggestion(sug: Sug) {
@@ -1258,7 +1270,7 @@ export default function App() {
         )}
 
         {/* ── Suggested tickets ── */}
-        {suggestions.length > 0 && (
+        {cfg.suggestionsEnabled && suggestions.length > 0 && (
           <div className="mb-5 sm:mb-6">
             <p className="t-meta font-semibold text-ink-3 uppercase tracking-wider mb-2">Suggested</p>
             <div className="space-y-2">
@@ -1268,14 +1280,14 @@ export default function App() {
             </div>
           </div>
         )}
-        {suggestionsFailed && suggestions.length === 0 && (
+        {cfg.suggestionsEnabled && suggestionsStatus === 'failed' && suggestions.length === 0 && (
           <div className="mb-5 sm:mb-6">
-            <button onClick={loadSuggestions} className="t-small text-ink-3 hover:text-accent underline cursor-pointer">
+            <button onClick={() => setSuggestionsRetry(attempt => attempt + 1)} className="t-small text-ink-3 hover:text-accent underline cursor-pointer">
               Failed to load suggestions — tap to retry
             </button>
           </div>
         )}
-        {suggestionsLoading && suggestions.length === 0 && (
+        {cfg.suggestionsEnabled && suggestionsStatus === 'loading' && suggestions.length === 0 && (
           <div className="mb-5 sm:mb-6 flex items-center gap-2 text-ink-3 t-small">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading suggestions…

@@ -147,6 +147,7 @@ try {
       assert.strictEqual(cfg.branchDefault, 'main', 'branchDefault should default to main');
       assert.strictEqual(cfg.dbBusyTimeout, 5000, 'dbBusyTimeout should default to 5000');
       assert.strictEqual(cfg.mergeStrategy, 'cherry-pick', 'mergeStrategy should default to cherry-pick');
+      assert.strictEqual(cfg.suggestionsEnabled, false, 'AI suggestions should be off by default');
       assert.strictEqual(cfg.test.enabled, false, 'test.enabled should default to false');
       assert.strictEqual(cfg.test.commandOverride, null, 'test.commandOverride should default to null');
       assert.strictEqual(cfg.projectName, 'My Project', 'projectName should come from config.json');
@@ -168,6 +169,7 @@ try {
       'DB_BUSY_TIMEOUT=9999',
       'JIRA_PROJECT_NAME=EnvProject',
       'JIRA_PROJECT_DIR=/env/path',
+      'JIRA_SUGGESTIONS_ENABLED=true',
       'JIRA_TEST_ENABLED=true',
       'JIRA_TEST_CMD=npm test',
       'JIRA_TEST_TIMEOUT=123456',
@@ -182,6 +184,7 @@ try {
       assert.strictEqual(cfg.dbBusyTimeout, 9999, 'dbBusyTimeout should be overridden by .env');
       assert.strictEqual(cfg.projectName, 'EnvProject', 'projectName should be overridden by .env');
       assert.strictEqual(cfg.projectDir, '/env/path', 'projectDir should be overridden by .env');
+      assert.strictEqual(cfg.suggestionsEnabled, true, '.env can enable AI suggestions');
     assert.strictEqual(cfg.test.enabled, true, 'test.enabled should be overridden by .env');
     assert.strictEqual(cfg.test.commandOverride, 'npm test', 'test.commandOverride should be overridden by .env');
     assert.strictEqual(cfg.test.timeout, 123456, 'test.timeout should be overridden by .env');
@@ -195,13 +198,14 @@ try {
   withProjectDir(() => {
     withoutEnv(() => {
       withConfigJson(
-        orig => ({ ...orig, remoteHost: 'json-host', explorer: { url: 'https://github.com/json-org/json-repo/blob/{sha}/{path}', owner: 'json-org', repo: 'json-repo' }, branchDefault: 'staging', dbBusyTimeout: 1234 }),
+        orig => ({ ...orig, remoteHost: 'json-host', explorer: { url: 'https://github.com/json-org/json-repo/blob/{sha}/{path}', owner: 'json-org', repo: 'json-repo' }, branchDefault: 'staging', dbBusyTimeout: 1234, suggestions: { enabled: true } }),
         () => {
           const cfg = reloadConfig();
           assert.strictEqual(cfg.remoteHost, 'json-host', 'remoteHost should be overridable via config.json');
           assert.strictEqual(cfg.explorer.url, 'https://github.com/json-org/json-repo/blob/{sha}/{path}', 'explorer.url should be overridable via config.json');
           assert.strictEqual(cfg.branchDefault, 'staging', 'branchDefault should be overridable via config.json');
           assert.strictEqual(cfg.dbBusyTimeout, 1234, 'dbBusyTimeout should be overridable via config.json');
+          assert.strictEqual(cfg.suggestionsEnabled, true, 'config.json can enable AI suggestions');
           console.log('PASS: new fields can be set via config.json');
         }
       );
@@ -213,11 +217,12 @@ try {
 (function testEnvWinsOverConfigJson() {
   withProjectDir(() => {
     withConfigJson(
-      orig => ({ ...orig, remoteHost: 'from-json' }),
+      orig => ({ ...orig, remoteHost: 'from-json', suggestions: { enabled: true } }),
       () => {
-        withEnv('REMOTE_HOST=from-env', () => {
+        withEnv('REMOTE_HOST=from-env\nJIRA_SUGGESTIONS_ENABLED=false', () => {
           const cfg = reloadConfig();
           assert.strictEqual(cfg.remoteHost, 'from-env', '.env should take precedence over config.json');
+          assert.strictEqual(cfg.suggestionsEnabled, false, '.env can turn off suggestions enabled in config.json');
           console.log('PASS: .env overrides config.json when both define the same field');
         });
       }

@@ -251,6 +251,7 @@ app.get('/api/config', (req, res) => {
     remoteHost: config.remoteHost,
     explorer: config.explorer,
     testEnabled: config.test.enabled,
+    suggestionsEnabled: config.suggestionsEnabled,
     branchDefault: config.branchDefault,
     mergeStrategy: config.mergeStrategy,
   });
@@ -1461,6 +1462,7 @@ const SUGGESTIONS_TICKET_ID = '_suggestions';
 const SUGGESTION_ID_PREFIX = 'sug-';
 
 async function generateSuggestions(retries = 3) {
+  if (!config.suggestionsEnabled) return;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const visionPath = path.join(config.projectDir, 'docs', 'vision.md');

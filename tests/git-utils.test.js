@@ -29,7 +29,11 @@ function cleanup(repoDir) {
   fs.rmSync(repoDir, { recursive: true, force: true });
 }
 
+const config = require('../config');
 const { resolveDiffBase, getBranchStaleness } = require('../git-utils');
+
+// The fixture repositories all use main, independent of the installed dashboard.
+config.branchDefault = 'main';
 
 // ── resolveDiffBase ───────────────────────────────────────────
 
