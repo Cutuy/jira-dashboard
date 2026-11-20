@@ -1487,7 +1487,7 @@ async function generateSuggestions(retries = 3) {
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
       if (parsed && Array.isArray(parsed.tickets)) {
         suggestions = parsed.tickets.map(t => ({
-          id: SUGGESTION_ID_PREFIX + crypto.randomBytes(4).toString('hex'),
+          id: SUGGESTION_ID_PREFIX + uid(),
           title: t.title,
           content: t.content,
         }));
