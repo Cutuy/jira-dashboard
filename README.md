@@ -106,6 +106,28 @@ AI ticket suggestions are off by default. To enable them, set
 `JIRA_SUGGESTIONS_ENABLED=true` in `<project>/.jira-dashboard/.env` and restart
 the dashboard with a configured coding CLI.
 
+## Import from Jira and Confluence
+
+Set `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in your shell for
+Atlassian MCP API-token authentication. An MCP OAuth access token can be
+passed in `ATLASSIAN_MCP_ACCESS_TOKEN`. The importer uses your account’s
+read access. [Atlassian MCP authentication](https://developer.atlassian.com/cloud/rovo-mcp/guides/authentication-and-authorization/)
+
+```powershell
+npm.cmd run import:jira -- 'https://your-site.atlassian.net/jira/software/projects/PROJ/boards/1' --project-dir 'C:\work\my-project'
+```
+
+The importer reads the board and backlog, including issues, comments, worklogs,
+change history, and accessible attachments. It reads the Confluence space with
+the same key as the Jira project. Use `--space KEY` to select another space
+and `--dry-run` to see source counts without writing local data.
+
+Imported tickets appear on the dashboard. The Files view shows Confluence
+documents in their folder hierarchy and stores Jira source records and
+attachments under **Reference → Atlassian**. Repeated imports preserve
+existing local tickets and files. The importer reports unreadable items and
+returns exit code 2 after saving the available data.
+
 ## Development
 
 ```bash

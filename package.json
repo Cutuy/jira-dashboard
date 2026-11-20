@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
+    "import:jira": "node scripts/import-jira.js",
     "test": "node --test --test-concurrency=1 \"tests/*.test.js\"",
     "test:config": "node tests/config.test.js",
     "test:prompts": "node tests/prompts.test.js",
@@ -21,6 +22,7 @@
     "prepush": "npm test"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "ajv": "^8.20.0",
     "better-sqlite3": "^13.0.3",
     "express": "^5.3.0"

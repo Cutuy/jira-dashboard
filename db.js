@@ -281,6 +281,19 @@ function createTicket(data) {
   return getTicket(t.id);
 }
 
+function importNewTickets(tickets) {
+  return db.transaction(() => {
+    let created = 0;
+    for (const ticket of tickets) {
+      if (stmts.getTicket.get(ticket.id)) continue;
+      createTicket(ticket);
+      logActivity(ticket.id, 'imported', ticket.sourceUrl, ticket.stage);
+      created++;
+    }
+    return { created, skipped: tickets.length - created };
+  }).immediate();
+}
+
 function updateTicket(id, fields) {
   const ticket = stmts.getTicket.get(id);
   if (!ticket) return null;
@@ -587,6 +600,7 @@ module.exports = {
   getTicket,
   getAllTickets,
   createTicket,
+  importNewTickets,
   updateTicket,
   updateTicketField,
   deleteTicket,
