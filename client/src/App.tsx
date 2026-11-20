@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { timeAgo } from './lib/utils'
 import { PrBanner } from './components/pr-banner'
 import { ConsoleOutput } from './components/console-output'
@@ -6,6 +6,9 @@ import { ResourceUsageSection } from './components/resource-usage-section'
 import { ImplementationPlanSection } from './components/implementation-plan-section'
 import { UnitTestsSection } from './components/unit-tests-section'
 import { LiveStatusSection } from './components/live-status-section'
+import { Btn } from './components/ui/dashboard-button'
+
+const ReferenceFiles = lazy(() => import('./components/reference-files'))
 
 const ACTIVITY_MAX_VISIBLE = 24
 const FILES_MODIFIED_MAX_VISIBLE = 12
@@ -13,7 +16,7 @@ const OTHER_MARKER = '__other__'
 import {
   Loader2, Link as LinkIcon, ExternalLink, Play, Shield,
   RefreshCw, ArrowRight, X, ChevronRight, Circle, Copy, Check, Sun, Moon, Monitor,
-  GitBranch, GitPullRequest, Ban
+  GitBranch, GitPullRequest, Ban, FolderOpen, LayoutGrid
 } from 'lucide-react'
 
 /* Extract a GitHub PR number from a PR URL (…/pull/123).
@@ -82,6 +85,12 @@ type Sug = { id: string; title: string; content: string }
    Order in the board, label, color, accent dot.
    ───────────────────────────────────────────────────────── */
 type Stage = 'clarification' | 'implementation' | 'review' | 'pr_opened' | 'done'
+type JiraBoard = {
+  id: string
+  title: string
+  columns: { id: string; name: string; statuses: { id: string; stage: Stage }[] }[]
+  tickets: { ticketId: string; statusId: string | null; importedStage: Stage }[]
+}
 
 const STAGES: Stage[] = ['clarification', 'implementation', 'review', 'pr_opened', 'done']
 
@@ -116,35 +125,6 @@ const STAGE_META: Record<Stage, { label: string; dot: string; pill: string }> = 
 /* ─────────────────────────────────────────────────────────
    Tiny UI primitives — no shadcn noise.
    ───────────────────────────────────────────────────────── */
-function Btn({
-  variant = 'default', size = 'md', children, className = '', ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'default' | 'outline' | 'ghost' | 'danger' | 'secondary'
-  size?: 'sm' | 'md'
-}) {
-  const base =
-    'inline-flex items-center justify-center gap-1.5 font-medium rounded-md ' +
-    'transition-colors disabled:opacity-50 disabled:cursor-not-allowed ' +
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20'
-  // sm: 40px on phones (h-10), 28px on desktop (h-7).  md: 44px on phones (h-11), 36px on desktop (h-9).
-  const sizes = {
-    sm: 'h-10 sm:h-7 px-3 sm:px-2.5 t-body sm:t-small',
-    md: 'h-11 sm:h-9 px-4 sm:px-3 t-body',
-  }
-  const variants = {
-    default:    'bg-brand text-brand-fg hover:bg-zinc-700',
-    outline:    'bg-surface text-ink-2 ring-1 ring-border hover:bg-bg hover:text-ink-1',
-    ghost:      'text-ink-2 hover:bg-surface-3 hover:text-ink-1',
-    secondary:  'bg-surface-3 text-ink-2 hover:bg-surface-3',
-    danger:     'bg-red-600 text-white hover:bg-red-700',
-  }
-  return (
-    <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
-      {children}
-    </button>
-  )
-}
-
 function StagePill({ stage }: { stage: string }) {
   const m = STAGE_META[stage as Stage]
   if (!m) return <span className="t-meta text-ink-2">{stage}</span>
@@ -153,6 +133,30 @@ function StagePill({ stage }: { stage: string }) {
       <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />
       {m.label}
     </span>
+  )
+}
+
+function BoardColumn({ name, dot, count, children, className = '' }: {
+  name: string; dot: string; count: number; children: React.ReactNode; className?: string
+}) {
+  return (
+    <section aria-label={name} className={`min-w-0 ${className}`}>
+      <header className="flex items-center justify-between gap-2 mb-2.5 px-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+          <h3 className="t-meta font-semibold text-ink-2">{name}</h3>
+        </div>
+        <span className="t-meta text-ink-3 bg-surface-3 px-1.5 py-0.5 rounded">{count}</span>
+      </header>
+      <div className="flex flex-col gap-2.5">
+        {count === 0 && (
+          <div className="rounded-lg border border-dashed border-border py-8 text-center t-small text-ink-3">
+            No tickets
+          </div>
+        )}
+        {children}
+      </div>
+    </section>
   )
 }
 
@@ -723,10 +727,12 @@ function notify(title: string, body: string) {
 /* ─────────────────────────────────────────────────────────
    App
    ───────────────────────────────────────────────────────── */
-interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; branchDefault?: string; mergeStrategy?: string }
+interface ClientConfig { projectName: string; remoteHost: string; explorer: { url: string; owner: string; repo: string }; testEnabled: boolean; suggestionsEnabled: boolean; branchDefault?: string; mergeStrategy?: string }
 
 export default function App() {
+  const [filesOpen, setFilesOpen] = useState(() => location.hash === '#files')
   const [tickets, setTickets] = useState<T[]>([])
+  const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([])
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [creating, setCreating] = useState(false)
@@ -739,14 +745,14 @@ export default function App() {
   const [machineChecks, setMachineChecks] = useState<{ name: string; status: string; detail: string }[]>([])
   const [machineChecksLoading, setMachineChecksLoading] = useState(true)
   const [suggestions, setSuggestions] = useState<Sug[]>([])
-  const [suggestionsLoading, setSuggestionsLoading] = useState(true)
-  const [suggestionsFailed, setSuggestionsFailed] = useState(false)
+  const [suggestionsStatus, setSuggestionsStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
+  const [suggestionsRetry, setSuggestionsRetry] = useState(0)
   const [loadingId, setLoadingId] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
   const [theme, setTheme] = useState<'auto' | 'dark' | 'light'>(
     (typeof localStorage !== 'undefined' && localStorage.getItem('theme') as any) || 'auto'
   )
-  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' }, testEnabled: false })
+  const [cfg, setCfg] = useState<ClientConfig>({ projectName: 'Board', remoteHost: 'example-claw', explorer: { url: '', owner: '', repo: '' }, testEnabled: false, suggestionsEnabled: false })
   const [diff, setDiff] = useState('')
   const [diffFiles, setDiffFiles] = useState<{ path: string; explorer_prefix: string | null }[]>([])
   const [diffCommitSha, setDiffCommitSha] = useState('')
@@ -763,7 +769,7 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const d = await fetchJSON<{ tickets: T[] }>('/api/tickets')
+      const d = await fetchJSON<{ tickets: T[]; jiraBoards?: JiraBoard[] }>('/api/tickets')
       const prev = prevTicketsRef.current
       const changed: string[] = []
       for (const t of d.tickets) {
@@ -775,6 +781,7 @@ export default function App() {
         setHighlightedIds(prev => { const next = new Set(prev); for (const id of changed) next.add(id); return next })
       }
       setTickets(d.tickets)
+      setJiraBoards(d.jiraBoards ?? [])
     } catch {}
   }, [])
 
@@ -804,18 +811,45 @@ export default function App() {
   useEffect(() => {
     fetchJSON<ClientConfig>('/api/config').then(setCfg).catch(() => {});
     fetchJSON<{ name: string; status: string; detail: string }[]>('/api/system/checks').then(d => { setMachineChecks(d); setMachineChecksLoading(false); }).catch(() => setMachineChecksLoading(false));
-    load(); loadSuggestions(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i)
+    load(); ensureNotifyPerm(); const i = setInterval(load, 10000); return () => clearInterval(i)
   }, [load])
 
-  // Open ticket from URL hash (#ticket/<id>) on mount, and react to hashchange.
+  useEffect(() => {
+    if (!cfg.suggestionsEnabled) return
+    const controller = new AbortController()
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    setSuggestionsStatus('loading')
+
+    async function pollSuggestions() {
+      if (++attempts > 15) { setSuggestionsStatus('failed'); return }
+      const results = await fetchJSON<Sug[]>('/api/suggestions', { signal: controller.signal }).catch(() => [])
+      if (controller.signal.aborted) return
+      if (results.length > 0) {
+        setSuggestions(results)
+        setSuggestionsStatus('idle')
+      } else {
+        timer = setTimeout(pollSuggestions, 3000)
+      }
+    }
+    void pollSuggestions()
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [cfg.suggestionsEnabled, suggestionsRetry])
+
+  // Open the ticket or Files view selected by the URL hash.
   // Mobile / shared-link flow: pasting the URL opens the right ticket.
   useEffect(() => {
     const fromHash = () => {
+      setFilesOpen(location.hash === '#files')
       const m = location.hash.match(/^#ticket\/([\w-]+)/)
       const id = m?.[1]
       if (id) {
         if (id !== selRef.current?.id) openRef.current(id)
-      } else if (selRef.current) {
+      } else {
+        if (abort.current) { abort.current.abort(); abort.current = null; setLoadingId(null) }
         setSel(null)
         if (poll.current) { poll.current.close(); poll.current = undefined }
       }
@@ -931,19 +965,6 @@ export default function App() {
     setSel(null)
     if (poll.current) { poll.current.close(); poll.current = undefined }
     if (location.hash.startsWith('#ticket/')) history.replaceState(null, '', ' ')
-  }
-
-  async function loadSuggestions() {
-    setSuggestionsLoading(true); setSuggestionsFailed(false)
-    let attempts = 0
-    const poll = () => {
-      if (++attempts > 15) { setSuggestionsLoading(false); setSuggestionsFailed(true); return }
-      fetchJSON<Sug[]>('/api/suggestions').then(d => {
-        if (d.length > 0) { setSuggestions(d); setSuggestionsLoading(false); return }
-        setTimeout(poll, 3000)
-      }).catch(() => setTimeout(poll, 3000))
-    }
-    poll()
   }
 
   async function acceptSuggestion(sug: Sug) {
@@ -1175,14 +1196,35 @@ export default function App() {
     }
   }
 
-  /* Group tickets by stage once */
-  const byStage = useMemo(() => {
-    const m: Record<Stage, T[]> = { clarification: [], implementation: [], review: [], pr_opened: [], done: [] }
-    for (const t of tickets) {
-      if (t.stage in m) (m as any)[t.stage].push(t)
+  const { byStage, jiraViews, showWorkflow } = useMemo(() => {
+    const ticketsById = new Map(tickets.map(ticket => [ticket.id, ticket]))
+    const onJiraBoard = new Set<string>()
+    const jiraViews = jiraBoards.map(board => {
+      const columns = board.columns.map(column => ({ ...column, items: [] as T[] }))
+      const unmapped: typeof columns[number] = { id: 'unmapped', name: 'Unmapped Jira issues', statuses: [], items: [] }
+      for (const membership of board.tickets) {
+        const ticket = ticketsById.get(membership.ticketId)
+        if (!ticket) continue
+        onJiraBoard.add(ticket.id)
+        const column = ticket.stage === membership.importedStage
+          ? columns.find(candidate => candidate.statuses.some(status => status.id === membership.statusId))
+          : columns.find(candidate => candidate.statuses.some(status => status.stage === ticket.stage))
+        const destination = column ?? unmapped
+        destination.items.push(ticket)
+      }
+      if (unmapped.items.length) columns.push(unmapped)
+      return { id: board.id, title: board.title, columns }
+    })
+    const byStage: Record<Stage, T[]> = { clarification: [], implementation: [], review: [], pr_opened: [], done: [] }
+    for (const ticket of tickets) {
+      if (!onJiraBoard.has(ticket.id) && Object.hasOwn(byStage, ticket.stage)) byStage[ticket.stage as Stage].push(ticket)
     }
-    return m
-  }, [tickets])
+    return { byStage, jiraViews, showWorkflow: jiraBoards.length === 0 || tickets.some(ticket => !onJiraBoard.has(ticket.id)) }
+  }, [jiraBoards, tickets])
+
+  const renderTicket = (ticket: T) => (
+    <TicketCard key={ticket.id} t={ticket} onOpen={open} loading={loadingId === ticket.id} highlighted={highlightedIds.has(ticket.id)} />
+  )
 
   /* Filtered activity for the sidebar (drop noise) */
   const visibleActivity = useMemo(() => {
@@ -1196,24 +1238,28 @@ export default function App() {
       <header className="sticky top-0 z-30 bg-surface/85 backdrop-blur border-b border-border">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-12 flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2 min-w-0">
-            <h1 className="t-h-page text-ink-1 shrink-0">{cfg.projectName}</h1>
-            <span className="t-small text-ink-2 hidden sm:inline truncate">Project tickets</span>
+            <h1 className="t-h-page text-ink-1 truncate">{cfg.projectName}</h1>
+            {!filesOpen && <span className="t-small text-ink-2 hidden sm:inline shrink-0">Project tickets</span>}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {cfg.testEnabled && (
+            <a href={filesOpen ? '#' : '#files'} className="inline-flex h-10 sm:h-7 items-center gap-1.5 rounded-md px-2.5 t-body sm:t-small font-medium text-ink-2 ring-1 ring-border hover:bg-surface-3 hover:text-ink-1">
+              {filesOpen ? <LayoutGrid className="h-3.5 w-3.5" /> : <FolderOpen className="h-3.5 w-3.5" />}
+              {filesOpen ? 'Board' : 'Files'}
+            </a>
+            {!filesOpen && cfg.testEnabled && (
               <Btn variant="outline" size="sm" onClick={runTest} aria-label="Run Tests">
                 <Play className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Run Tests</span>
               </Btn>
             )}
-            <Btn variant="outline" size="sm" onClick={runPrepush} aria-label="Pre-push check">
+            {!filesOpen && <Btn variant="outline" size="sm" onClick={runPrepush} aria-label="Pre-push check">
               <Shield className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Pre-push</span>
-            </Btn>
-            <Btn variant="outline" size="sm" onClick={restartServer} aria-label="Restart server">
+            </Btn>}
+            {!filesOpen && <Btn variant="outline" size="sm" onClick={restartServer} aria-label="Restart server">
               <RefreshCw className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Restart</span>
-            </Btn>
+            </Btn>}
             <button onClick={cycleTheme} className="h-7 w-7 inline-flex items-center justify-center rounded-md text-ink-2 hover:text-ink-1 hover:bg-surface-3 transition-colors" aria-label={`Theme: ${theme}`}>
               {theme === 'dark' ? <Moon className="h-3.5 w-3.5" /> : theme === 'light' ? <Sun className="h-3.5 w-3.5" /> : <Monitor className="h-3.5 w-3.5" />}
             </button>
@@ -1222,7 +1268,12 @@ export default function App() {
       </header>
 
       {/* ── Main ── */}
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
+      {filesOpen && <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
+        <Suspense fallback={<p role="status" className="t-body text-ink-2">Loading files…</p>}>
+          <ReferenceFiles />
+        </Suspense>
+      </main>}
+      {!filesOpen && <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
         {/* Inline new-ticket form */}
         <div className="bg-surface rounded-lg ring-1 ring-border p-3 mb-5 sm:mb-6">
           <div className="flex flex-col sm:flex-row gap-2.5 sm:items-center">
@@ -1272,7 +1323,7 @@ export default function App() {
         )}
 
         {/* ── Suggested tickets ── */}
-        {suggestions.length > 0 && (
+        {cfg.suggestionsEnabled && suggestions.length > 0 && (
           <div className="mb-5 sm:mb-6">
             <p className="t-meta font-semibold text-ink-3 uppercase tracking-wider mb-2">Suggested</p>
             <div className="space-y-2">
@@ -1282,53 +1333,50 @@ export default function App() {
             </div>
           </div>
         )}
-        {suggestionsFailed && suggestions.length === 0 && (
+        {cfg.suggestionsEnabled && suggestionsStatus === 'failed' && suggestions.length === 0 && (
           <div className="mb-5 sm:mb-6">
-            <button onClick={loadSuggestions} className="t-small text-ink-3 hover:text-accent underline cursor-pointer">
+            <button onClick={() => setSuggestionsRetry(attempt => attempt + 1)} className="t-small text-ink-3 hover:text-accent underline cursor-pointer">
               Failed to load suggestions — tap to retry
             </button>
           </div>
         )}
-        {suggestionsLoading && suggestions.length === 0 && (
+        {cfg.suggestionsEnabled && suggestionsStatus === 'loading' && suggestions.length === 0 && (
           <div className="mb-5 sm:mb-6 flex items-center gap-2 text-ink-3 t-small">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading suggestions…
           </div>
         )}
 
+        {jiraViews.map(board => (
+          <section key={board.id} aria-label={board.title} className="mb-5">
+            <h2 className="t-h mb-2.5">{board.title}</h2>
+            <div className="grid grid-cols-1 gap-3 sm:flex sm:overflow-x-auto sm:pb-2">
+              {board.columns.map(column => (
+                <BoardColumn key={column.id} name={column.name}
+                  dot={column.statuses[0] ? STAGE_META[column.statuses[0].stage].dot : 'bg-ink-3'}
+                  count={column.items.length} className="sm:min-w-48 sm:flex-1">
+                  {column.items.map(renderTicket)}
+                </BoardColumn>
+              ))}
+            </div>
+          </section>
+        ))}
+
         {/* ── Board: active stages ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
+        {showWorkflow && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
           {STAGES.filter(s => s !== 'done').map(stage => {
             const items = byStage[stage]
             const meta = STAGE_META[stage]
             return (
-              <section key={stage} className="min-w-0">
-                <header className="flex items-center justify-between mb-2.5 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-                    <h3 className="t-meta font-semibold text-ink-2 uppercase tracking-wider">
-                      {meta.label}
-                    </h3>
-                  </div>
-                  <span className="t-meta text-ink-3 bg-surface-3 px-1.5 py-0.5 rounded">
-                    {items.length}
-                  </span>
-                </header>
-                <div className="flex flex-col gap-2.5">
-                  {items.length === 0 && (
-                    <div className="rounded-lg border border-dashed border-border py-8 text-center t-small text-ink-3">
-                      No tickets
-                    </div>
-                  )}
-                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} highlighted={highlightedIds.has(t.id)} />)}
-                </div>
-              </section>
+              <BoardColumn key={stage} name={meta.label} dot={meta.dot} count={items.length}>
+                {items.map(renderTicket)}
+              </BoardColumn>
             )
           })}
-        </div>
+        </div>}
 
         {/* ── Board: done row ── */}
-        {(() => {
+        {showWorkflow && (() => {
           const items = byStage.done
           const meta = STAGE_META.done
           return (
@@ -1350,13 +1398,13 @@ export default function App() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
-                  {items.map(t => <TicketCard key={t.id} t={t} onOpen={open} loading={loadingId === t.id} highlighted={highlightedIds.has(t.id)} />)}
+                  {items.map(renderTicket)}
                 </div>
               )}
             </section>
           )
         })()}
-      </main>
+      </main>}
 
       {/* ── Ticket popup ── */}
       {loadingId && !sel && (

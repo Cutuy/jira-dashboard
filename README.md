@@ -10,11 +10,43 @@ task uses a separate Git worktree.
 
 ## Quick start
 
+### Windows
+
+Install [Git for Windows](https://gitforwindows.org/) and
+[Node.js 24.x, version 24.18 or later](https://nodejs.org/en/download).
+Start PowerShell and run:
+
+```powershell
+git clone https://github.com/TheEugen/jira-dashboard.git
+cd jira-dashboard
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 -ProjectDir 'C:\work\my-project'
+```
+
+Point `-ProjectDir` at a Git checkout with at least one commit. Setup builds
+the client, writes settings under that checkout's `.jira-dashboard` directory,
+and starts the dashboard at **http://127.0.0.1:3006**. Keep the PowerShell window
+open while you use it. Press Ctrl+C to stop.
+
+The default `dummy` adapter lets you open the board without an AI account. To
+run the agent workflow, install and authenticate a coding CLI, then add
+`-Coder codex`, `-Coder claude`, or `-Coder opencode` on first setup. Use
+`-CoderBin` if the CLI needs an explicit executable path. Use `-Port` to choose
+another port, `-Branch` to choose a local base branch, and `-Worktrees` to
+pre-create a worktree pool.
+
+To launch again, add `-Mode Start` to the command above. Use `-Mode Setup` to
+rebuild or provision without launching. Repeat setup preserves the existing
+`<project>/.jira-dashboard/.env`. Edit that file to change a saved setting.
+Keep `.jira-dashboard/` and `.worktrees/` in your project's Git ignore list.
+On Windows, `JIRA_TEST_CMD` runs with Command Prompt syntax.
+
+### Linux and macOS
+
 You'll need Git, Node.js 24.18 or later in the 24.x series, npm, and a configured
 coding CLI: OpenCode, Claude Code, or Codex.
 
 ```bash
-git clone https://github.com/Cutuy/jira-dashboard.git
+git clone https://github.com/TheEugen/jira-dashboard.git
 cd jira-dashboard
 ./bootstrap.sh
 ```
@@ -43,6 +75,19 @@ accepting changes or opening a pull request. The board also works on mobile.
 | --- | --- |
 | ![Mobile home](docs/screenshots/mobile-home.png) | ![Mobile ticket](docs/screenshots/mobile-ticket.png) |
 
+## Reference files
+
+Open **Files** from the board and navigate to the destination folder. Use
+**New folder** to create one. Click **Copy** to select files from your
+computer, or drop files onto the Files view. Each file can be up to 50 MiB,
+and a copy with an existing name leaves the original in place.
+
+Select a file to preview Markdown, PDF, or plain text, or download it. Markdown
+and plain-text files over 2 MiB are available as downloads.
+**Copy path** copies the file's absolute path for use in ticket descriptions.
+The dashboard stores files in `<project>/.jira-dashboard/reference/` and also
+lists files you place there through File Explorer.
+
 ## Configuration
 
 | File | Purpose |
@@ -57,6 +102,35 @@ The default runs Python tests. Keep credentials out of version control.
 Adapters for OpenCode, Claude Code, and Codex live in [`coder/`](coder/).
 A dummy adapter is available for testing without a coding service.
 
+AI ticket suggestions are off by default. To enable them, set
+`JIRA_SUGGESTIONS_ENABLED=true` in `<project>/.jira-dashboard/.env` and restart
+the dashboard with a configured coding CLI.
+
+## Import from Jira and Confluence
+
+Set `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in your shell for
+Atlassian MCP API-token authentication. An MCP OAuth access token can be
+passed in `ATLASSIAN_MCP_ACCESS_TOKEN`. The importer uses your account’s
+read access. [Atlassian MCP authentication](https://developer.atlassian.com/cloud/rovo-mcp/guides/authentication-and-authorization/)
+
+```powershell
+npm.cmd run import:jira -- 'https://your-site.atlassian.net/jira/software/projects/PROJ/boards/1' --project-dir 'C:\work\my-project'
+```
+
+The importer reads the board and backlog, including issues, comments, worklogs,
+change history, and accessible attachments. It reads the Confluence space with
+the same key as the Jira project. Use `--space KEY` to select another space
+and `--dry-run` to see source counts without writing local data.
+
+Imported tickets appear in the Jira board's original columns, in Jira order.
+This includes empty columns and columns that share a dashboard workflow stage.
+The dashboard restores columns for earlier imports from the local Jira archive.
+The Files view shows Confluence
+documents in their folder hierarchy and stores Jira source records and
+attachments under **Reference → Atlassian**. Repeated imports preserve
+existing local tickets and files. The importer reports unreadable items and
+returns exit code 2 after saving the available data.
+
 ## Development
 
 ```bash
@@ -67,6 +141,10 @@ npm ci
 npm test
 npm run build
 ```
+
+Run `npm.cmd run test:windows` from the dashboard root on Windows for the
+PowerShell setup and end-to-end test. It uses a temporary Git checkout and a
+stub coder.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contributions,
 the [roadmap](docs/todo.md) for planned work, and the

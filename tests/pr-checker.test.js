@@ -3,7 +3,7 @@
 let assert;
 try { assert = require('assert'); } catch { assert = require('node:assert'); }
 
-// ── Mock child_process.exec before loading pr-checker ───────────
+// ── Mock child_process.execFile before loading pr-checker ───────
 // Use mutable state so each test can control what gh returns.
 let mockPRData = {
   state: 'OPEN',
@@ -12,10 +12,10 @@ let mockPRData = {
   statusCheckRollup: [{ context: 'CI Check', state: 'FAILURE' }],
 };
 
-const mockExec = (cmd, opts, cb) => {
-  if (cmd.startsWith('gh pr view')) {
+const mockExecFile = (file, args, opts, cb) => {
+  if (file === 'gh' && args[0] === 'pr' && args[1] === 'view') {
     cb(null, JSON.stringify(mockPRData));
-  } else if (cmd.startsWith('gh api graphql')) {
+  } else if (file === 'gh' && args[0] === 'api' && args[1] === 'graphql') {
     cb(null, JSON.stringify([]));
   } else {
     cb(new Error('mock: unknown command'));
@@ -24,7 +24,7 @@ const mockExec = (cmd, opts, cb) => {
 
 const cpPath = require.resolve('child_process');
 require.cache[cpPath] = {
-  id: cpPath, filename: cpPath, loaded: true, exports: { exec: mockExec },
+  id: cpPath, filename: cpPath, loaded: true, exports: { execFile: mockExecFile },
 };
 
 const { startPrChecker } = require('../pr-checker');

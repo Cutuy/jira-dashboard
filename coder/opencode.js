@@ -1,5 +1,6 @@
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
+const { coderCommand } = require('../process-utils');
 
 module.exports = function opencodeBackend(config, store) {
   return {
@@ -7,11 +8,14 @@ module.exports = function opencodeBackend(config, store) {
 
     stats() {
       try {
-        const out = execSync(`${config.coder.bin} stats --project ''`, {
+        const cwd = config.projectDir;
+        const env = { ...process.env, ...this.buildEnv() };
+        const [file, args] = coderCommand(config.coder.bin, ['stats', '--project', ''], { cwd, env });
+        const out = execFileSync(file, args, {
           encoding: 'utf-8',
           timeout: config.coder.timeouts.command,
           stdio: 'pipe',
-          cwd: config.projectDir,
+          cwd, env, windowsHide: true,
         });
         const cost = (out.match(/Total Cost\s+\$?([\d.]+)/) || [])[1];
         const input = (out.match(/Input\s+([\d,.]+[KMB]?)/) || [])[1];
@@ -33,7 +37,7 @@ module.exports = function opencodeBackend(config, store) {
     buildEnv() {
       return {
         HOME: process.env.HOME,
-        PATH: `${config.venvBin()}:${process.env.PATH}`,
+        PATH: [config.venvBin(), process.env.PATH].join(path.delimiter),
         VIRTUAL_ENV: path.join(config.projectDir, config.venv.dir),
       };
     },

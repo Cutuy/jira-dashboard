@@ -1,4 +1,6 @@
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
+
+const REVIEW_THREADS_QUERY = 'query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{databaseId body path line isMinimized}}}}}}}';
 
 function startPrChecker(db, config, sseBroadcast, runClarify) {
   const INTERVAL = 180_000; // 3 min
@@ -42,7 +44,7 @@ function startPrChecker(db, config, sseBroadcast, runClarify) {
     let json;
     try {
       json = await new Promise((res, rej) => {
-        exec(`gh pr view ${prNum} --json state,reviews,comments,statusCheckRollup`,
+        execFile('gh', ['pr', 'view', prNum, '--json', 'state,reviews,comments,statusCheckRollup'],
           { cwd: config.projectDir, timeout: 15000 },
           (err, out) => err ? rej(err) : res(out));
       });
@@ -56,7 +58,9 @@ function startPrChecker(db, config, sseBroadcast, runClarify) {
     if (ghHost && ghOwner && ghRepo) {
       try {
         const reviewData = await new Promise((res, rej) => {
-          exec(`gh api graphql --hostname ${ghHost} -f query='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{databaseId body path line isMinimized}}}}}}}' -f o=${ghOwner} -f n=${ghRepo} -F p=${prNum} --jq '.data.repository.pullRequest.reviewThreads.nodes'`,
+          execFile('gh', ['api', 'graphql', '--hostname', ghHost, '-f', `query=${REVIEW_THREADS_QUERY}`,
+            '-f', `o=${ghOwner}`, '-f', `n=${ghRepo}`, '-F', `p=${prNum}`,
+            '--jq', '.data.repository.pullRequest.reviewThreads.nodes'],
             { cwd: config.projectDir, timeout: 15000 },
             (err, out) => err ? rej(err) : res(out));
         });

@@ -3,10 +3,10 @@
 // New backends: add a file under coder/<name>.js and register it below.
 
 const path = require('path');
-const { spawn } = require('child_process');
 const config = require('../config');
 const store = require('./store');
 const { createResourceMonitor } = require('../monitor');
+const { coderCommand, spawnManaged } = require('../process-utils');
 
 const opencode = require('./opencode')(config, store);
 const claude = require('./claude')(config, store);
@@ -64,10 +64,6 @@ function buildSpawnOptions(backend, opts = {}) {
     env: { ...process.env, ...backend.buildEnv() },
     timeout,
     stdio: ['ignore', 'pipe', 'pipe'],
-    // Own process group so the whole coder tree (the CLI plus any git /
-    // language-server children it spawns) can be killed together when a
-    // ticket is closed mid-run — a plain kill only hits the group leader.
-    detached: true,
   };
 }
 
@@ -85,14 +81,15 @@ function run(prompt, opts = {}) {
     const args = backend.buildArgs(prompt, sessionId, title);
     const spawnOpts = buildSpawnOptions(backend, opts);
 
-    const proc = spawn(config.coder.bin, args, spawnOpts);
+    const [file, commandArgs] = coderCommand(config.coder.bin, args, spawnOpts);
+    const proc = spawnManaged(file, commandArgs, spawnOpts);
     // Hand the live process to the caller so it can be force-killed (e.g. when
     // a ticket is closed mid-run) without waiting for it to finish.
     if (typeof opts.onSpawn === 'function') opts.onSpawn(proc);
 
     let stdout = '';
     let stderr = '';
-    const resMonitor = createResourceMonitor(proc.pid, data => {
+    const resMonitor = proc.pid && createResourceMonitor(proc.pid, data => {
       if (!onProgress) return;
       let tokensStr = '';
       try {
@@ -131,16 +128,16 @@ function run(prompt, opts = {}) {
       const raw = stdout.trim();
       const parsed = backend.parseOutput ? backend.parseOutput(raw) : { text: raw, tokens: null, sessionId: null };
       if (resMonitor) { resMonitor.poll(); resMonitor.close(); }
-      if (code === 0) {
+      if (proc.timedOut || code === null) {
+        reject(new Error(`Coder killed (signal/timeout): ${(parsed.text || stderr || '').slice(-500)}`));
+      } else if (code === 0) {
         if (!parsed.text && stderr.trim()) {
           reject(new Error(`Coder produced no output: ${stderr.slice(-500)}`));
         } else {
           resolve(parsed);
         }
-      } else if (code !== null && parsed.text) {
+      } else if (parsed.text) {
         resolve(parsed);
-      } else if (code === null) {
-        reject(new Error(`Coder killed (signal/timeout): ${(parsed.text || stderr || '').slice(-500)}`));
       } else {
         reject(new Error(`Coder exited ${code}: ${stderr.slice(-500)}`));
       }

@@ -22,6 +22,7 @@ function makeRepo() {
   sh('git config user.email test@test.local', tmp);
   sh('git config user.name test', tmp);
   sh('git config commit.gpgsign false', tmp);
+  sh('git config core.autocrlf false', tmp);
   fs.writeFileSync(path.join(tmp, 'README.md'), 'main v1\n');
   sh('git add README.md', tmp);
   sh('git commit -q -m "v1"', tmp);
@@ -54,8 +55,8 @@ function cleanupRepo(repoDir) {
     const branchName = `feature/${ticketId}`;
     const worktreePath = path.join(repo, '.worktrees', ticketId);
     fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
-    sh(`git branch -D ${branchName} || true`, repo);
-    sh(`git worktree add -b ${branchName} ${worktreePath} main`, repo);
+    try { sh(`git branch -D ${branchName}`, repo); } catch {}
+    sh(`git worktree add -b ${branchName} "${worktreePath}" main`, repo);
 
     // ASSERTION 1: the main checkout's main checkout working tree files
     // the user already had are byte-for-byte unchanged. (The porcelain
@@ -96,7 +97,7 @@ function cleanupRepo(repoDir) {
     assert.ok(branches.includes(branchName), 'feature branch created on main repo');
 
     // Cleanup
-    sh(`git worktree remove --force ${worktreePath}`, repo);
+    sh(`git worktree remove --force "${worktreePath}"`, repo);
     sh(`git branch -D ${branchName}`, repo);
 
     console.log('PASS: implement flow preserves user uncommitted changes in main checkout');
@@ -203,7 +204,7 @@ function cleanupRepo(repoDir) {
     // the point is: with WIP uncommitted in the working tree, `git checkout`
     // will refuse with "would overwrite local changes" — which is the
     // user-visible bug we just fixed. Simulate that:
-    sh('git stash pop -q || true', repo);
+    try { sh('git stash pop -q', repo); } catch {}
     let checkoutRefused = false;
     try { sh('git checkout main', repo); } catch { checkoutRefused = true; }
     assert.ok(checkoutRefused,
@@ -245,10 +246,11 @@ function cleanupRepo(repoDir) {
   // Local clone that will develop a stale local `main` ref.
   const local = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-diffbase-clone-'));
   try {
-    sh(`git clone -q ${origin} ${local}`, os.tmpdir());
+    sh(`git clone -q "${origin}" "${local}"`, os.tmpdir());
     sh('git config user.email test@test.local', local);
     sh('git config user.name test', local);
     sh('git config commit.gpgsign false', local);
+    sh('git config core.autocrlf false', local);
 
     // Advance origin/main by many commits (upstream moves on).
     for (let i = 0; i < 20; i++) {

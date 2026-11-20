@@ -2,9 +2,27 @@
 
 let assert;
 try { assert = require('assert'); } catch { assert = require('node:assert'); }
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jd coder test '));
+const cliPath = path.join(cliDir, 'cli.cjs');
+fs.writeFileSync(cliPath, `
+console.log(JSON.stringify(process.argv.slice(2)));
+if (process.argv.at(-1) === 'timeout fixture') setTimeout(() => {}, 30_000);
+`);
+process.on('exit', () => fs.rmSync(cliDir, { recursive: true, force: true }));
+
+const windows = process.platform === 'win32';
+const cliShim = path.join(cliDir, 'cli.cmd');
+if (windows) {
+  fs.writeFileSync(cliShim, '@exit /b 1\r\n');
+  fs.writeFileSync(path.join(cliDir, 'cli'), 'exec node cli.cjs "$@"\n');
+}
 
 // ── Helpers: create a mock config with given coder type ────
-function injectMockConfig(type) {
+function injectMockConfig(type, bin = cliPath) {
   delete require.cache[require.resolve('../config')];
   delete require.cache[require.resolve('../coder')];
 
@@ -16,12 +34,12 @@ function injectMockConfig(type) {
     exports: {
       port: 3006,
       projectName: 'test-project',
-      projectDir: '/tmp',
+      projectDir: cliDir,
       worktreesDir: '/tmp/test-project/.worktrees',
       dataDir: '/tmp/test-data',
       coder: {
         type: type,
-        bin: 'echo',
+        bin,
         timeouts: { clarify: 1000, implement: 1000, suggest: 1000, test: 1000, command: 500 },
       },
       venv: { dir: '.venv', pythonpath: 'src' },
@@ -174,7 +192,7 @@ function cleanupMock() {
   injectMockConfig('codex');
   const coder = require('../coder');
 
-  const result = await coder.run('test prompt', { timeout: 500 });
+  const result = await coder.run('test prompt', { timeout: 5000 });
   assert.ok(typeof result === 'object' && typeof result.text === 'string', 'run with codex type should return { output, tokens, sessionId }');
   console.log('PASS: run with codex type resolves');
 
@@ -313,14 +331,25 @@ function cleanupMock() {
 })();
 
 (async function testRunWithClaudeType() {
-  injectMockConfig('claude');
+  injectMockConfig('claude', windows ? cliShim : cliPath);
   const coder = require('../coder');
 
-  const result = await coder.run('test prompt', { timeout: 500 });
+  const prompt = 'First line\nSecond line with "quotes", & and %PATH%';
+  const result = await coder.run(prompt, { timeout: 5000 });
   assert.ok(typeof result === 'object' && typeof result.text === 'string', 'run with claude type should return { output, tokens, sessionId }');
+  assert.strictEqual(JSON.parse(result.text).at(-1), prompt, 'multiline prompt arrives as one literal argument');
   console.log('PASS: run with claude type resolves');
 
   cleanupMock();
+})();
+
+(async function testCoderTimeout() {
+  injectMockConfig('codex');
+  const coder = require('../coder');
+  cleanupMock();
+
+  await assert.rejects(coder.run('timeout fixture', { timeout: 2000 }), /Coder killed.*timeout/);
+  console.log('PASS: coder timeout terminates the process even after partial output');
 })();
 
 // ── Coder type auto-detection ─────────────────────────────

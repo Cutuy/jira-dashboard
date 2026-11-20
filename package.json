@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/config.test.js && node tests/prompts.test.js && node tests/coder.test.js && node tests/server-helpers.test.js && node tests/git-workflow.test.js && node tests/worktree-pool.test.js && node tests/worktree-manager.test.js && node tests/pr-checker.test.js",
+    "import:jira": "node scripts/import-jira.js",
+    "test": "node --test --test-concurrency=1 \"tests/*.test.js\"",
     "test:config": "node tests/config.test.js",
     "test:prompts": "node tests/prompts.test.js",
     "test:coder": "node tests/coder.test.js",
@@ -17,9 +18,11 @@
     "test:git": "node tests/git-workflow.test.js",
     "test:pool": "node tests/worktree-pool.test.js",
     "test:wtmgr": "node tests/worktree-manager.test.js",
-    "prepush": "bash .githooks/pre-push"
+    "test:windows": "node tests/windows-smoke.js",
+    "prepush": "npm test"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "ajv": "^8.20.0",
     "better-sqlite3": "^13.0.3",
     "express": "^5.3.0"

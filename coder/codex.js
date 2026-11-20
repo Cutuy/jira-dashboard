@@ -21,7 +21,7 @@ module.exports = function codexBackend(config, store) {
     buildEnv() {
       return {
         HOME: process.env.HOME,
-        PATH: `${config.venvBin()}:${process.env.PATH}`,
+        PATH: [config.venvBin(), process.env.PATH].join(path.delimiter),
         VIRTUAL_ENV: path.join(config.projectDir, config.venv.dir),
       };
     },

@@ -23,6 +23,16 @@
         }
       }
     },
+    "suggestions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Generate AI ticket suggestions. Override with JIRA_SUGGESTIONS_ENABLED in the dashboard .env.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
     "worktrees": {
       "type": "object",
       "properties": {

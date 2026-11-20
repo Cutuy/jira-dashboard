@@ -18,7 +18,7 @@ function create(pid, onProgress) {
   let peakMem = 0;
   const startTime = Date.now();
 
-  const interval = setInterval(() => {
+  function poll() {
     try {
       const out = execFileSync('ps', ['-p', String(pid), '-o', 'rss=,time=,thcount='], {
         encoding: 'utf-8', timeout: 2000,
@@ -33,9 +33,10 @@ function create(pid, onProgress) {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       if (onProgress) onProgress({ cpuSec: cpuSec.toFixed(1), memMB: memMB.toFixed(1), threads, elapsed, ncores });
     } catch {}
-  }, 3000);
+  }
+  const interval = setInterval(poll, 3000);
 
-  return { interval, peakMem: () => peakMem, close: () => clearInterval(interval) };
+  return { poll, peakMem: () => peakMem, close: () => clearInterval(interval) };
 }
 
 module.exports = { create };

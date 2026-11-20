@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { detectType } = require('./coder');
@@ -6,7 +6,9 @@ const { detectType } = require('./coder');
 function isGhUsed(config) {
   // Detect whether the project uses GitHub (and therefore needs gh CLI)
   try {
-    const remote = execSync('git remote get-url origin', { cwd: config.projectDir, timeout: 3000, encoding: 'utf-8' }).trim().toLowerCase();
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: config.projectDir, timeout: 3000, encoding: 'utf-8', stdio: 'pipe',
+    }).trim().toLowerCase();
     return remote.includes('github') || remote.includes('gitent');
   } catch {
     return false; // no remote → no GitHub → gh not needed
@@ -16,10 +18,11 @@ function isGhUsed(config) {
 function runMachineChecks(config) {
   const checks = [];
   const ghNeeded = isGhUsed(config);
+  const gh = args => execFileSync('gh', args, { timeout: 5000, encoding: 'utf-8', stdio: 'pipe' });
 
   // ── gh CLI ──
   try {
-    const ver = execSync('gh --version', { timeout: 5000, encoding: 'utf-8' }).trim();
+    const ver = gh(['--version']).trim();
     checks.push({ name: 'gh CLI', status: 'ok', detail: ver.split('\n')[0] });
   } catch {
     checks.push({ name: 'gh CLI', status: ghNeeded ? 'fail' : 'warn', detail: 'gh CLI not found' + (ghNeeded ? ' — required for PR operations' : ' (not needed — no GitHub remote detected)') });
@@ -27,7 +30,7 @@ function runMachineChecks(config) {
 
   // ── gh auth status ──
   try {
-    execSync('gh auth status', { timeout: 5000, encoding: 'utf-8' });
+    gh(['auth', 'status']);
     checks.push({ name: 'gh auth', status: 'ok', detail: 'Authenticated' });
   } catch {
     checks.push({ name: 'gh auth', status: ghNeeded ? 'fail' : 'warn', detail: 'gh not authenticated' + (ghNeeded ? ' — run gh auth login' : ' (not needed — no GitHub remote detected)') });
@@ -35,7 +38,7 @@ function runMachineChecks(config) {
 
   // ── gh api graphql (needed by pr-checker and coder for review comments) ──
   try {
-    execSync('gh api graphql -f query=\'{__typename}\'', { timeout: 5000, encoding: 'utf-8' });
+    gh(['api', 'graphql', '-f', 'query={__typename}']);
     checks.push({ name: 'gh api graphql', status: 'ok', detail: 'GraphQL API reachable' });
   } catch {
     checks.push({ name: 'gh api graphql', status: ghNeeded ? 'fail' : 'warn', detail: 'gh api graphql failed' + (ghNeeded ? ' — check authentication and host configuration' : ' (not needed — no GitHub remote detected)') });

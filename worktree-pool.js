@@ -16,7 +16,7 @@
 //     branch, and deletes the feature branch — the directory is reused, never
 //     removed.
 
-const { execSync, exec } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -30,25 +30,22 @@ const ADD_TIMEOUT = 900_000; // 15 min for the initial worktree checkout
 const FETCH_TIMEOUT = 600_000; // 10 min: first fetch of a big monorepo branch
 
 function git(args, cwd, timeout = DEFAULT_TIMEOUT) {
-  return execSync(`git ${args}`, {
+  return execFileSync('git', args, {
     cwd,
     encoding: 'utf-8',
     timeout,
     maxBuffer: MAX_BUFFER,
+    stdio: 'pipe',
   }).trim();
 }
 
-function execAsync(command, cwd, timeout) {
+function gitAsync(args, cwd, timeout) {
   return new Promise((resolve, reject) => {
-    exec(command, { cwd, timeout, maxBuffer: MAX_BUFFER }, (err, stdout, stderr) => {
+    execFile('git', args, { cwd, timeout, maxBuffer: MAX_BUFFER }, (err, stdout, stderr) => {
       if (err) reject(new Error(stderr.trim() || err.message));
       else resolve(stdout.trim());
     });
   });
-}
-
-function gitAsync(args, cwd, timeout) {
-  return execAsync(`git ${args}`, cwd, timeout);
 }
 
 // Resolve the base ref for a new ticket branch. Returns the remote-tracking ref
@@ -59,7 +56,7 @@ function gitAsync(args, cwd, timeout) {
 function freshDefaultBase({ cwd, branchDefault, remote = 'origin' }) {
   const remoteRef = `${remote}/${branchDefault}`;
   try {
-    git(`rev-parse --verify --quiet ${remoteRef}^{commit}`, cwd);
+    git(['rev-parse', '--verify', '--quiet', `${remoteRef}^{commit}`], cwd);
     return remoteRef;
   } catch {
     return branchDefault;
@@ -95,7 +92,7 @@ function isPoolWorktree(worktreesDir, wt) {
 // and any pool-<n> with n >= count is removed. Safe to run repeatedly.
 function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
   fs.mkdirSync(worktreesDir, { recursive: true });
-  try { git('worktree prune', projectDir); } catch { /* best-effort */ }
+  try { git(['worktree', 'prune'], projectDir); } catch { /* best-effort */ }
 
   const created = [];
   const kept = [];
@@ -106,7 +103,7 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
     // Clear a stale orphan directory (crashed prior run) so `worktree add`
     // gets a clean target.
     if (fs.existsSync(wt)) fs.rmSync(wt, { recursive: true, force: true });
-    git(`worktree add --detach ${wt} ${branchDefault}`, projectDir, ADD_TIMEOUT);
+    git(['worktree', 'add', '--detach', wt, branchDefault], projectDir, ADD_TIMEOUT);
     created.push(wt);
   }
 
@@ -116,7 +113,7 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
       const m = /^pool-(\d+)$/.exec(name);
       if (!m || parseInt(m[1], 10) < count) continue;
       const wt = path.join(worktreesDir, name);
-      try { git(`worktree remove --force ${wt}`, projectDir); } catch { /* best-effort */ }
+      try { git(['worktree', 'remove', '--force', wt], projectDir); } catch { /* best-effort */ }
       if (fs.existsSync(wt)) {
         try { fs.rmSync(wt, { recursive: true, force: true }); } catch { /* best-effort */ }
       }
@@ -124,7 +121,7 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
     }
   }
 
-  try { git('worktree prune', projectDir); } catch { /* best-effort */ }
+  try { git(['worktree', 'prune'], projectDir); } catch { /* best-effort */ }
   return { created, kept, removed };
 }
 
@@ -141,22 +138,22 @@ function provisionPool({ projectDir, worktreesDir, branchDefault, count }) {
 //      rather than letting the coder's `git add -A` sweep in partial state.
 async function acquireSlot({ worktreePath, branchDefault, branchName, remote = 'origin' }) {
   clearIndexLock(worktreePath);
-  try { git('rebase --abort 2>/dev/null', worktreePath); } catch { }
+  try { git(['rebase', '--abort'], worktreePath); } catch { }
   const base = freshDefaultBase({ cwd: worktreePath, branchDefault, remote });
-  const before = git('rev-parse --short HEAD', worktreePath);
+  const before = git(['rev-parse', '--short', 'HEAD'], worktreePath);
   console.log(`[acquireSlot] ${branchName} base=${base} worktree=${worktreePath} HEAD-before=${before}`);
   try {
-    await gitAsync(`reset --hard ${base}`, worktreePath);
+    await gitAsync(['reset', '--hard', base], worktreePath);
   } catch (e) {
     console.log(`[acquireSlot] reset --hard FAILED: ${e.message}`);
     throw e;
   }
-  const after = git('rev-parse --short HEAD', worktreePath);
+  const after = git(['rev-parse', '--short', 'HEAD'], worktreePath);
   console.log(`[acquireSlot] HEAD-after-reset=${after}`);
-  await gitAsync('clean -fd', worktreePath);
-  git(`checkout -B ${branchName}`, worktreePath);
-  console.log(`[acquireSlot] branch=${git('rev-parse --abbrev-ref HEAD', worktreePath)} HEAD=${git('rev-parse --short HEAD', worktreePath)}`);
-  const status = git('status --porcelain', worktreePath);
+  await gitAsync(['clean', '-fd'], worktreePath);
+  git(['checkout', '-B', branchName], worktreePath);
+  console.log(`[acquireSlot] branch=${git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreePath)} HEAD=${git(['rev-parse', '--short', 'HEAD'], worktreePath)}`);
+  const status = git(['status', '--porcelain'], worktreePath);
   if (status) {
     console.log(`[acquireSlot] DIRTY after checkout: ${status.slice(0, 200)}`);
     throw new Error(`Worktree not clean after checkout: ${status.slice(0, 200)}`);
@@ -164,7 +161,7 @@ async function acquireSlot({ worktreePath, branchDefault, branchName, remote = '
   // Record the exact commit SHA that the feature branch was based on, so the
   // ready handler can squash against this precise point rather than computing
   // a merge-base against a potentially stale local ref at PR time.
-  const baseSha = git('rev-parse HEAD', worktreePath);
+  const baseSha = git(['rev-parse', 'HEAD'], worktreePath);
   console.log(`[acquireSlot] done — clean base_sha=${baseSha}`);
   return { baseSha };
 }
@@ -181,7 +178,7 @@ function clearIndexLock(worktreePath) {
     if (fs.statSync(gitDir).isFile()) {
       const content = fs.readFileSync(gitDir, 'utf-8').trim();
       const m = content.match(/^gitdir:\s*(.+)$/m);
-      if (m) gitDir = m[1];
+      if (m) gitDir = path.resolve(worktreePath, m[1]);
     }
   } catch { return; }
   const lock = path.join(gitDir, 'index.lock');
@@ -191,17 +188,17 @@ function clearIndexLock(worktreePath) {
 async function releaseSlot({ worktreePath, branchDefault, branchName }) {
   if (!isValidWorktree(worktreePath)) return;
   clearIndexLock(worktreePath);
-  const before = (() => { try { return git('rev-parse --short HEAD', worktreePath); } catch { return '?'; } })();
-  try { git('rebase --abort 2>/dev/null', worktreePath); } catch { }
-  try { git('reset --hard', worktreePath); } catch { }
-  try { git('clean -fd', worktreePath); } catch { }
-  try { await gitAsync(`checkout --detach ${branchDefault}`, worktreePath); } catch {
+  const before = (() => { try { return git(['rev-parse', '--short', 'HEAD'], worktreePath); } catch { return '?'; } })();
+  try { git(['rebase', '--abort'], worktreePath); } catch { }
+  try { git(['reset', '--hard'], worktreePath); } catch { }
+  try { git(['clean', '-fd'], worktreePath); } catch { }
+  try { await gitAsync(['checkout', '--detach', branchDefault], worktreePath); } catch {
     console.log(`[releaseSlot] checkout --detach ${branchDefault} FAILED (best-effort)`);
   }
   if (branchName) {
-    try { git(`branch -D ${branchName}`, worktreePath); } catch { }
+    try { git(['branch', '-D', branchName], worktreePath); } catch { }
   }
-  const after = (() => { try { return git('rev-parse --short HEAD', worktreePath); } catch { return '?'; } })();
+  const after = (() => { try { return git(['rev-parse', '--short', 'HEAD'], worktreePath); } catch { return '?'; } })();
   console.log(`[releaseSlot] released ${branchName} from ${worktreePath}: HEAD ${before} → ${after}`);
 }
 
